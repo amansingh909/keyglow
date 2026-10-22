@@ -30,7 +30,8 @@ pub(super) fn spawn(
         None => t + gap * rng.next_f32() as f64,
     };
     // Stars due more than a lifetime ago would already be gone, so skip them (after a pause).
-    next = next.max(t - life);
+    // And never wait longer than the longest gap at today's density, so raising it shows at once.
+    next = next.max(t - life).min(t + 1.5 * gap);
     while next <= t {
         // At the cap a star is skipped rather than cutting an older one short.
         if st.live.len() < MAX_LIVE {

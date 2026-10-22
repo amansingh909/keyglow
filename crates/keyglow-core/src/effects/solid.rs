@@ -1,6 +1,6 @@
 //! Static, Breathing and Spectrum: the whole keyboard in one colour.
 
-use super::{hash, rate, Cover};
+use super::{hash, Cover};
 use crate::color::{hsv, lerp, Rgb};
 use crate::setup::Palette;
 
@@ -12,8 +12,7 @@ pub(super) fn fill(out: &mut Cover, color: Rgb) {
 
 /// Fades from black up to the colour and back once per cycle. With several colours each
 /// breath takes the next one; a random palette rolls a new hue per breath.
-pub(super) fn breathing(out: &mut Cover, palette: &Palette, speed: u8, salt: u64, t: f64) {
-    let cycles = t * rate(speed) as f64;
+pub(super) fn breathing(out: &mut Cover, palette: &Palette, cycles: f64, salt: u64) {
     let n = cycles.floor();
     let level = 0.5 - 0.5 * (std::f32::consts::TAU * (cycles - n) as f32).cos();
     let color = match palette {

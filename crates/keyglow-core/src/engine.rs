@@ -6,6 +6,9 @@ use crate::frame::{scale, Frame, BLACK_FRAME};
 use crate::rng::Rng;
 use crate::setup::{Layer, Setup, COLS, ROWS};
 
+/// The most time one frame moves an effect along: a long sleep or a clock step can't jump it.
+const MAX_STEP: f64 = 0.5;
+
 /// Draws a setup's layers. Deterministic: the same seed, presses and times give the same frames.
 pub struct Engine {
     setup: Setup,
@@ -13,6 +16,8 @@ pub struct Engine {
     states: Vec<LayerState>,
     rng: Rng,
     board: Board,
+    /// When the last frame was drawn.
+    last_t: Option<f64>,
 }
 
 impl Engine {
@@ -20,13 +25,27 @@ impl Engine {
         let mut rng = Rng::new(seed);
         let setup = setup.sanitized();
         let states = fresh_states(&setup, &mut rng);
-        Engine { setup, states, rng, board: Board::new() }
+        Engine { setup, states, rng, board: Board::new(), last_t: None }
     }
 
-    /// Replaces the layers. Running ripples, lit keys and stars are dropped.
+    /// Replaces the setup. A layer whose effect is the same kind as the layer that was at its
+    /// place keeps what it was showing (stars, rings, lit keys, where its wave or breath had
+    /// got to, its noise and random colours), so dragging a slider doesn't restart it.
+    /// Layers whose kind changed, and new layers, start fresh.
     pub fn set_setup(&mut self, setup: Setup) {
-        self.setup = setup.sanitized();
-        self.states = fresh_states(&self.setup, &mut self.rng);
+        let setup = setup.sanitized();
+        let mut old = std::mem::take(&mut self.states).into_iter();
+        for (i, layer) in setup.layers.iter().enumerate() {
+            let state = match (self.setup.layers.get(i), old.next()) {
+                (Some(was), Some(mut state)) if was.effect.kind() == layer.effect.kind() => {
+                    state.carry_over(&was.effect, &layer.effect, &mut self.rng);
+                    state
+                }
+                _ => LayerState::new(&layer.effect, &mut self.rng),
+            };
+            self.states.push(state);
+        }
+        self.setup = setup;
     }
 
     /// A key at this grid cell went down at `t` (seconds on a monotonic clock).
@@ -41,8 +60,12 @@ impl Engine {
         }
     }
 
-    /// The frame at `t`, with the setup's brightness applied.
+    /// The frame at `t`, with the setup's brightness applied. Waves, breaths and the like move
+    /// on by the time since the last frame (at most MAX_STEP), so a speed change only changes
+    /// how fast they go from here on.
     pub fn render(&mut self, t: f64) -> Frame {
+        let dt = self.last_t.map_or(0.0, |last| (t - last).clamp(0.0, MAX_STEP));
+        self.last_t = Some(t);
         if self.setup.brightness == 0 {
             return BLACK_FRAME;
         }
@@ -50,7 +73,7 @@ impl Engine {
         for (layer, state) in self.setup.layers.iter().zip(&mut self.states) {
             if shows(layer) {
                 let mut cover = EMPTY_COVER;
-                state.draw(&layer.effect, t, &self.board, &mut self.rng, &mut cover);
+                state.draw(&layer.effect, t, dt, &self.board, &mut self.rng, &mut cover);
                 mix(&mut frame, &cover, layer.opacity as f32 / 100.0);
             }
         }
@@ -299,24 +322,176 @@ mod tests {
     }
 
     #[test]
-    fn set_setup_clears_running_ripples() {
+    fn starlight_stars_survive_a_density_change() {
+        let stars = |density| {
+            layer(Effect::Starlight { palette: Palette::Colors(vec![Rgb::WHITE]), density, duration_ms: 2000 })
+        };
+        let mut e = Engine::new(setup(vec![stars(60)]), 1);
+        let before = frames(&mut e, 0.0, 1.0).pop().unwrap();
+        let lit_before: Vec<_> = cells().filter(|&(r, c)| lit(before[r][c])).collect();
+        assert!(!lit_before.is_empty());
+        e.set_setup(setup(vec![stars(61)]));
+        let after = e.render(1.0 + 1.0 / 30.0);
+        assert!(lit_before.iter().all(|&(r, c)| lit(after[r][c])), "stars were dropped");
+
+        // Dragging the slider saves every 50 ms; the stars must still get past fading in.
+        let mut lit_keys = 0;
+        for i in 0..90 {
+            if i % 2 == 0 {
+                e.set_setup(setup(vec![stars(60 + (i / 2 % 2) as u8)]));
+            }
+            let f = e.render(2.0 + i as f64 / 30.0);
+            lit_keys += cells().filter(|&(r, c)| f[r][c].r > 128).count();
+        }
+        assert!(lit_keys / 90 >= 3, "only {} bright keys a frame while dragging", lit_keys as f64 / 90.0);
+    }
+
+    #[test]
+    fn raising_starlight_density_shows_soon() {
+        let stars = |density| {
+            layer(Effect::Starlight { palette: Palette::Colors(vec![Rgb::WHITE]), density, duration_ms: 2000 })
+        };
+        let mut e = Engine::new(setup(vec![stars(1)]), 1);
+        frames(&mut e, 0.0, 0.2);
+        e.set_setup(setup(vec![stars(100)]));
+        let f = frames(&mut e, 0.2 + 1.0 / 30.0, 0.5).pop().unwrap();
+        assert!(cells().any(|(r, c)| lit(f[r][c])), "no stars yet at the new density");
+    }
+
+    #[test]
+    fn ripples_survive_an_opacity_change() {
         let mut e = Engine::new(setup(vec![kind(EffectKind::Ripple)]), 1);
-        e.key_press(3, 5, 0.0);
-        assert!(e.animating(0.1));
-        e.set_setup(setup(vec![kind(EffectKind::Ripple)]));
-        assert!(!e.animating(0.1));
-        assert_eq!(e.render(0.1), BLACK_FRAME);
+        e.key_press(3, 9, 0.0);
+        e.render(0.2);
+        let mut faded = setup(vec![kind(EffectKind::Ripple)]);
+        faded.layers[0].opacity = 80;
+        e.set_setup(faded);
+        assert!(e.animating(0.25));
+        let f = e.render(0.25);
+        assert!(cells().any(|(r, c)| lit(f[r][c])), "the ring in flight was dropped");
+    }
+
+    #[test]
+    fn a_changed_effect_kind_starts_fresh() {
+        let mut e = Engine::new(setup(vec![kind(EffectKind::Ripple)]), 1);
+        e.key_press(3, 9, 0.0);
+        e.render(0.1);
+        e.set_setup(setup(vec![kind(EffectKind::Reactive)]));
+        assert!(!e.animating(0.15));
+        assert_eq!(e.render(0.15), BLACK_FRAME);
+    }
+
+    #[test]
+    fn a_palette_change_shows_at_once() {
+        let wave = |colors| layer(Effect::Wave { palette: Palette::Colors(colors), speed: 40, direction: 0, band: 18 });
+        let mut e = Engine::new(setup(vec![wave(vec![RED, BLUE])]), 1);
+        e.render(0.0);
+        e.set_setup(setup(vec![wave(vec![GREEN])]));
+        let f = e.render(1.0 / 30.0);
+        assert!(cells().all(|(r, c)| f[r][c] == GREEN));
+    }
+
+    #[test]
+    fn a_random_wave_keeps_its_colours_across_a_change() {
+        let mut wave = layer(Effect::Wave { palette: Palette::Random, speed: 40, direction: 0, band: 18 });
+        let mut e = Engine::new(setup(vec![wave.clone()]), 1);
+        let before = e.render(0.0);
+        wave.opacity = 99;
+        e.set_setup(setup(vec![wave]));
+        let after = e.render(0.0);
+        assert!(biggest_step(&before, &after) <= 3, "{}", biggest_step(&before, &after));
+    }
+
+    fn with_speed(kind: EffectKind, speed: u8) -> Layer {
+        let mut effect = Effect::default_for(kind);
+        match &mut effect {
+            Effect::Breathing { speed: s, .. }
+            | Effect::Spectrum { speed: s }
+            | Effect::Wave { speed: s, .. }
+            | Effect::Wheel { speed: s, .. }
+            | Effect::Fire { speed: s, .. } => *s = speed,
+            _ => unreachable!(),
+        }
+        layer(effect)
+    }
+
+    /// The largest change of any channel of any key between two frames.
+    fn biggest_step(a: &Frame, b: &Frame) -> u8 {
+        let d = |x: u8, y: u8| x.abs_diff(y);
+        cells()
+            .map(|(r, c)| d(a[r][c].r, b[r][c].r).max(d(a[r][c].g, b[r][c].g)).max(d(a[r][c].b, b[r][c].b)))
+            .max()
+            .unwrap()
+    }
+
+    /// The average, over keys, of each key's largest channel change between two frames.
+    fn mean_step(a: &Frame, b: &Frame) -> f32 {
+        let d = |x: u8, y: u8| x.abs_diff(y);
+        let sum: u32 = cells()
+            .map(|(r, c)| d(a[r][c].r, b[r][c].r).max(d(a[r][c].g, b[r][c].g)).max(d(a[r][c].b, b[r][c].b)) as u32)
+            .sum();
+        sum as f32 / (ROWS * COLS) as f32
+    }
+
+    /// Runs `kind` at speed 40 for two seconds about an hour in, then nudges the speed to 41.
+    /// Returns the frames before the change and the first frame after it. (At exactly 3600 s
+    /// the old time-based phase drifted by a whole 18.00 cycles, which hid the jump.)
+    fn speed_nudge(kind: EffectKind) -> (Vec<Frame>, Frame) {
+        let mut e = Engine::new(setup(vec![with_speed(kind, 40)]), 1);
+        let fs = frames(&mut e, 3698.0, 3700.0);
+        e.set_setup(setup(vec![with_speed(kind, 41)]));
+        let after = e.render(3700.0 + 1.0 / 30.0);
+        (fs, after)
+    }
+
+    #[test]
+    fn speed_change_does_not_jump_the_wave() {
+        let (fs, after) = speed_nudge(EffectKind::Wave);
+        let step = biggest_step(fs.last().unwrap(), &after);
+        assert!(step <= 40, "jumped by {step}");
+    }
+
+    #[test]
+    fn speed_change_does_not_jump_other_effects() {
+        let mut jumps = Vec::new();
+        for kind in [EffectKind::Breathing, EffectKind::Spectrum, EffectKind::Wheel] {
+            let (fs, after) = speed_nudge(kind);
+            let step = biggest_step(fs.last().unwrap(), &after);
+            if step > 40 {
+                jumps.push(format!("{kind:?} jumped by {step}"));
+            }
+        }
+        // Fire's keys flicker hard from frame to frame, so compare its average change instead.
+        let (fs, after) = speed_nudge(EffectKind::Fire);
+        let usual = fs.windows(2).map(|w| mean_step(&w[0], &w[1])).fold(0.0, f32::max);
+        let step = mean_step(fs.last().unwrap(), &after);
+        if step > usual * 1.5 + 1.0 {
+            jumps.push(format!("Fire changed by {step:.1} a key on average (usual at most {usual:.1})"));
+        }
+        assert!(jumps.is_empty(), "{jumps:?}");
+    }
+
+    #[test]
+    fn a_long_sleep_or_a_step_back_moves_at_most_half_a_second() {
+        let last = |times: &[f64]| {
+            let mut e = Engine::new(setup(vec![kind(EffectKind::Wave)]), 1);
+            times.iter().map(|&t| e.render(t)).last().unwrap()
+        };
+        assert_eq!(last(&[10.0, 10_000.0]), last(&[10.0, 10.5]));
+        assert_eq!(last(&[10.0, 5.0]), last(&[10.0]));
     }
 
     #[test]
     fn breathing_fades_in_and_out() {
         let mut e = Engine::new(setup(vec![kind(EffectKind::Breathing)]), 1);
         let period = 1.0 / crate::effects::rate(30) as f64;
-        assert_eq!(e.render(0.0), BLACK_FRAME);
-        let f = e.render(period / 2.0);
-        assert!(cells().all(|(r, c)| near(f[r][c], Rgb::from_hex("#03FFFA").unwrap(), 1)));
-        let f = e.render(period / 4.0);
-        assert!(f[1][1].g > 60 && f[1][1].g < 200, "{:?}", f[1][1]);
+        // Frames come steadily, about 30 a second, through half a breath.
+        let mut at = |i: u32| e.render(i as f64 * period / 240.0);
+        assert_eq!(at(0), BLACK_FRAME);
+        let quarter = (1..=60).map(&mut at).last().unwrap();
+        assert!(quarter[1][1].g > 60 && quarter[1][1].g < 200, "{:?}", quarter[1][1]);
+        let half = (61..=120).map(&mut at).last().unwrap();
+        assert!(cells().all(|(r, c)| near(half[r][c], Rgb::from_hex("#03FFFA").unwrap(), 1)));
     }
 
     #[test]

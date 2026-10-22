@@ -4,7 +4,7 @@
 //! broken up by smooth noise that scrolls upward (the flames rise) and changes over
 //! time (they flicker). The palette runs from cool (first colour) to hot (last).
 
-use super::{hash, rate, smoothstep, Board, Colors, Cover};
+use super::{hash, smoothstep, Board, Colors, Cover};
 use crate::color::{lerp, Rgb};
 
 /// Noise repeats every this many units on its rising and flicker axes, so time can wrap
@@ -15,8 +15,8 @@ const RISE: f64 = 14.0;
 /// Noise units of change per speed cycle.
 const FLICKER: f64 = 10.0;
 
-pub(super) fn draw(out: &mut Cover, colors: &Colors, board: &Board, speed: u8, height: u8, salt: u64, t: f64) {
-    let cycles = t * rate(speed) as f64;
+/// `cycles` is how many speed cycles the layer has run.
+pub(super) fn draw(out: &mut Cover, colors: &Colors, board: &Board, cycles: f64, height: u8, salt: u64) {
     let rise = (cycles * RISE).rem_euclid(PERIOD) as f32;
     let z = (cycles * FLICKER).rem_euclid(PERIOD) as f32;
     let reach = height as f32 / 100.0;

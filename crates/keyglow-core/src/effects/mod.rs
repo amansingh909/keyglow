@@ -29,9 +29,9 @@ pub(crate) fn rate(speed: u8) -> f32 {
     0.05 * 20f32.powf((speed as f32 - 1.0) / 99.0)
 }
 
-/// How far through the current cycle `t` is, 0 to 1. Worked out in f64 so a long uptime keeps its precision.
-fn phase(t: f64, speed: u8) -> f32 {
-    (t * rate(speed) as f64).rem_euclid(1.0) as f32
+/// How far through the current cycle a layer is, 0 to 1.
+fn phase(cycles: f64) -> f32 {
+    cycles.rem_euclid(1.0) as f32
 }
 
 fn smoothstep(x: f32) -> f32 {
@@ -159,6 +159,9 @@ pub(crate) struct LayerState {
     live: VecDeque<Spark>,
     /// When Starlight's next star is due.
     next_star: Option<f64>,
+    /// Cycles run so far by a layer with a speed (Breathing, Spectrum, Wave, Wheel, Fire),
+    /// added up frame by frame so a speed change doesn't move where it is now.
+    cycles: f64,
 }
 
 impl LayerState {
@@ -169,6 +172,15 @@ impl LayerState {
             salt: rng.next_u64(),
             live: VecDeque::with_capacity(if transient { MAX_LIVE } else { 0 }),
             next_star: None,
+            cycles: 0.0,
+        }
+    }
+
+    /// The layer's settings changed but its effect is the same kind: keep everything running
+    /// and only re-read the colours if the palette changed.
+    pub(crate) fn carry_over(&mut self, was: &Effect, now: &Effect, rng: &mut Rng) {
+        if was.palette() != now.palette() {
+            self.colors = Colors::of(now.palette(), rng);
         }
     }
 
@@ -205,15 +217,25 @@ impl LayerState {
         self.live.iter().any(|s| s.t0 + lasts > t)
     }
 
-    pub(crate) fn draw(&mut self, effect: &Effect, t: f64, board: &Board, rng: &mut Rng, out: &mut Cover) {
+    /// Draws the layer at `t`, `dt` seconds after the previous frame.
+    pub(crate) fn draw(&mut self, effect: &Effect, t: f64, dt: f64, board: &Board, rng: &mut Rng, out: &mut Cover) {
+        if let Effect::Breathing { speed, .. }
+        | Effect::Spectrum { speed }
+        | Effect::Wave { speed, .. }
+        | Effect::Wheel { speed, .. }
+        | Effect::Fire { speed, .. } = *effect
+        {
+            self.cycles += rate(speed) as f64 * dt;
+        }
+        let cycles = self.cycles;
         match *effect {
             Effect::Static { color } => solid::fill(out, color),
-            Effect::Breathing { ref palette, speed } => solid::breathing(out, palette, speed, self.salt, t),
-            Effect::Spectrum { speed } => solid::fill(out, hsv(phase(t, speed), 1.0, 1.0)),
-            Effect::Wave { speed, direction, band, .. } => {
-                wave::wave(out, &self.colors, board, phase(t, speed), direction, band)
+            Effect::Breathing { ref palette, .. } => solid::breathing(out, palette, cycles, self.salt),
+            Effect::Spectrum { .. } => solid::fill(out, hsv(phase(cycles), 1.0, 1.0)),
+            Effect::Wave { direction, band, .. } => {
+                wave::wave(out, &self.colors, board, phase(cycles), direction, band)
             }
-            Effect::Wheel { speed, clockwise, .. } => wave::wheel(out, &self.colors, board, phase(t, speed), clockwise),
+            Effect::Wheel { clockwise, .. } => wave::wheel(out, &self.colors, board, phase(cycles), clockwise),
             Effect::Starlight { ref palette, density, duration_ms } => {
                 starlight::spawn(self, palette, density, duration_ms, t, board, rng);
                 starlight::draw(out, &self.live, duration_ms, t);
@@ -222,7 +244,7 @@ impl LayerState {
             Effect::Ripple { speed, reach, thickness, .. } => {
                 keys::ripple(out, &mut self.live, board, speed, reach, thickness, t)
             }
-            Effect::Fire { speed, height, .. } => fire::draw(out, &self.colors, board, speed, height, self.salt, t),
+            Effect::Fire { height, .. } => fire::draw(out, &self.colors, board, cycles, height, self.salt),
         }
     }
 }
