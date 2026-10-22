@@ -13,6 +13,7 @@ Only this keyboard model is supported and tested. It was built and tested on Pop
 
 - The OpenRazer kernel driver (`razerkbd`) installed. The OpenRazer daemon can stay running. When it dims the keyboard for the screen saver, `keyglowd` pauses until the brightness comes back.
 - Your user in the `plugdev` group. No root is needed to run or install Keyglow.
+- Read access to the keyboard's input device, so `keyglowd` can see key presses for Ripple and Reactive. The logged-in user normally has it through the desktop's access list for the device, or through the `input` or `plugdev` group. Without it the lighting still runs, but nothing reacts to keys.
 - Rust, to build it (`~/.cargo/bin/cargo` or `cargo` on your PATH).
 - OpenRGB, or anything else that lights the keyboard, turned off for this keyboard. Two programs drawing at once will flicker against each other.
 
@@ -22,7 +23,7 @@ From the project folder:
 
     ./install.sh --enable
 
-This builds a release version at low priority, copies `keyglowd` and `keyglow` to `~/.local/bin`, installs a login service and a launcher entry, and starts the lighting. Leave out `--enable` to install without starting anything.
+This builds a release version at low priority with at most 4 build jobs (set `CARGO_BUILD_JOBS` to change that), copies `keyglowd` and `keyglow` to `~/.local/bin`, installs a login service and a launcher entry, and starts the lighting. Leave out `--enable` to install without starting anything.
 
 Running `./install.sh` again later updates an existing install.
 
@@ -31,7 +32,7 @@ Running `./install.sh` again later updates an existing install.
 Open Keyglow from the app launcher, or run `keyglow`.
 
 - The left side lists your layers, top layer first. Each has an on/off switch. Use the buttons to add a layer, delete one, or move it up or down.
-- The right side shows the chosen layer's settings: colour pickers, sliders for speed, size and density, and direction where it applies. The keyboard changes while you drag.
+- The right side shows the chosen layer's settings: colour pickers, sliders for speed, size and density, and direction where it applies. The keyboard changes while you drag, and effects that are already running carry on rather than starting over.
 - The top bar has the setup name, a setup menu (switch, save, save as, rename, delete), Open Razer preset, overall brightness and frame rate.
 - The status line shows whether `keyglowd` is running and whether it can see the keyboard.
 
@@ -53,7 +54,7 @@ Choose Open Razer preset and pick a `.ChromaEffects` file. Its layers become Key
 
 ## How it starts
 
-The install puts a systemd user service at `~/.config/systemd/user/keyglowd.service`. It starts `keyglowd` at login, restarts it if it stops, and runs it at low priority with a CPU and memory limit. Handy commands:
+The install puts a systemd user service at `~/.config/systemd/user/keyglowd.service`. It starts `keyglowd` at login, restarts it if it fails (a crash or an error exit, not when you stop it yourself), and runs it at low priority with a CPU and memory limit. Handy commands:
 
     systemctl --user status keyglowd
     systemctl --user restart keyglowd
@@ -63,7 +64,7 @@ The install puts a systemd user service at `~/.config/systemd/user/keyglowd.serv
 
 ## Cost
 
-While something is animating at 30 frames a second, `keyglowd` uses about 2 to 3% of one core, almost all of it the keyboard driver's USB transfers. When nothing is moving it draws nothing and sleeps. The window uses nothing when closed and almost nothing when idle.
+While something is animating at 30 frames a second, `keyglowd` uses about 2 to 3% of one core, almost all of it the keyboard driver's USB transfers. When nothing is moving it draws nothing and sleeps, except that it resends the last frame every 5 seconds, so another program can't take the keyboard over for long. The window uses nothing when closed and almost nothing when idle.
 
 ## Files
 
