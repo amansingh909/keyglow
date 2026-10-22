@@ -1,0 +1,144 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LightingEffects>
+  <Mode>advanced</Mode>
+  <Devices>
+    <Device>
+      <Name>RAZER HUNTSMAN ELITE</Name>
+      <Product_ID>550</Product_ID>
+      <Vendor_ID>5426</Vendor_ID>
+      <Layout>1</Layout>
+      <Handle>896697133</Handle>
+      <Type>2</Type>
+      <SKU_ID>To be filled by O.E.M.</SKU_ID>
+    </Device>
+  </Devices>
+  <Colors />
+  <RandomColor>false</RandomColor>
+  <DeviceLayout>
+    <DevPositions>
+      <Item>
+        <Key>
+          <Device>
+            <Name>RAZER HUNTSMAN ELITE</Name>
+            <Product_ID>550</Product_ID>
+            <Vendor_ID>5426</Vendor_ID>
+            <Layout>1</Layout>
+            <Handle>896697133</Handle>
+            <Type>2</Type>
+            <SKU_ID>To be filled by O.E.M.</SKU_ID>
+          </Device>
+        </Key>
+        <Value>
+          <DevPos>
+            <X>60</X>
+            <Y>54</Y>
+            <Z>0</Z>
+          </DevPos>
+        </Value>
+      </Item>
+    </DevPositions>
+  </DeviceLayout>
+  <EffectLayers>
+    <EffectLayer>
+      <GroupId />
+      <Effect>static</Effect>
+      <Regions>
+        <EffectRegion>
+          <Start>auto</Start>
+          <DurationMs>0</DurationMs>
+          <Angle>90</Angle>
+          <Colors>
+            <RzColor>
+              <Green>255</Green>
+              <Blue>255</Blue>
+            </RzColor>
+          </Colors>
+          <End>never</End>
+          <Speed>5</Speed>
+          <Stops />
+          <Cycle>4294967295</Cycle>
+          <Pause>0</Pause>
+          <Width>100</Width>
+          <Split>false</Split>
+          <ScreenRect />
+          <Center />
+        </EffectRegion>
+      </Regions>
+      <Visible>true</Visible>
+      <Alpha>100</Alpha>
+      <Name>Static</Name>
+    </EffectLayer>
+    <EffectLayer>
+      <GroupId />
+      <Effect>starlight</Effect>
+      <Regions>
+        <EffectRegion>
+          <Start>auto</Start>
+          <DurationMs>0</DurationMs>
+          <Angle>90</Angle>
+          <Colors>
+            <RzColor>
+              <Red>247</Red>
+              <Green>1</Green>
+              <Blue>255</Blue>
+            </RzColor>
+          </Colors>
+          <End>never</End>
+          <Speed>5</Speed>
+          <Stops>
+            <unsignedInt>0</unsignedInt>
+          </Stops>
+          <Cycle>4294967295</Cycle>
+          <Pause>0</Pause>
+          <Width>100</Width>
+          <Duration>long</Duration>
+          <Split>false</Split>
+          <ScreenRect />
+          <Center />
+          <Density>3</Density>
+        </EffectRegion>
+      </Regions>
+      <Visible>true</Visible>
+      <Alpha>100</Alpha>
+      <Name>Starlight</Name>
+    </EffectLayer>
+    <EffectLayer>
+      <GroupId />
+      <Effect>ripple</Effect>
+      <Regions>
+        <EffectRegion>
+          <Start>onkeypress</Start>
+          <DurationMs>0</DurationMs>
+          <Angle>90</Angle>
+          <Colors>
+            <RzColor>
+              <Red>255</Red>
+              <Green>255</Green>
+              <Blue>255</Blue>
+            </RzColor>
+          </Colors>
+          <End>after 1 cycle</End>
+          <Speed>20</Speed>
+          <Stops>
+            <unsignedInt>0</unsignedInt>
+          </Stops>
+          <Cycle>1</Cycle>
+          <Pause>1</Pause>
+          <Width>300</Width>
+          <Split>false</Split>
+          <ScreenRect />
+          <Center />
+        </EffectRegion>
+      </Regions>
+      <Visible>true</Visible>
+      <Alpha>100</Alpha>
+      <Name>Ripple</Name>
+    </EffectLayer>
+  </EffectLayers>
+  <Guid>8036f71d-09b6-4212-a83b-464b3af03fcd</Guid>
+  <Name>Blue Pink StarLight White Ripple</Name>
+  <Version>3</Version>
+  <LedBoxList />
+  <Speed>0</Speed>
+  <Width>0</Width>
+</LightingEffects>
