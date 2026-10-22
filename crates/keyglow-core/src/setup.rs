@@ -4,18 +4,75 @@ use serde::{Deserialize, Serialize};
 pub const ROWS: usize = 6;
 pub const COLS: usize = 18;
 
+fn num<'de, D: serde::Deserializer<'de>>(d: D) -> Result<f64, D::Error> {
+    f64::deserialize(d)
+}
+fn clamp_u8<'de, D: serde::Deserializer<'de>>(d: D) -> Result<u8, D::Error> {
+    Ok(num(d)?.clamp(0.0, u8::MAX as f64).round() as u8)
+}
+fn clamp_u16<'de, D: serde::Deserializer<'de>>(d: D) -> Result<u16, D::Error> {
+    Ok(num(d)?.clamp(0.0, u16::MAX as f64).round() as u16)
+}
+fn clamp_u32<'de, D: serde::Deserializer<'de>>(d: D) -> Result<u32, D::Error> {
+    Ok(num(d)?.clamp(0.0, u32::MAX as f64).round() as u32)
+}
+fn clamp_f32<'de, D: serde::Deserializer<'de>>(d: D) -> Result<f32, D::Error> {
+    Ok(num(d)? as f32)
+}
+fn d_name() -> String {
+    "Default".into()
+}
+fn d_fps() -> u32 {
+    30
+}
+fn d_100() -> u8 {
+    100
+}
+fn d_true() -> bool {
+    true
+}
+fn d_white() -> Rgb {
+    Rgb::WHITE
+}
+fn d_pal(kind: EffectKind) -> Palette {
+    Effect::default_for(kind).palette().cloned().unwrap_or(Palette::Rainbow)
+}
+fn d_pal_breathing() -> Palette { d_pal(EffectKind::Breathing) }
+fn d_pal_wave() -> Palette { d_pal(EffectKind::Wave) }
+fn d_pal_wheel() -> Palette { d_pal(EffectKind::Wheel) }
+fn d_pal_starlight() -> Palette { d_pal(EffectKind::Starlight) }
+fn d_pal_reactive() -> Palette { d_pal(EffectKind::Reactive) }
+fn d_pal_ripple() -> Palette { d_pal(EffectKind::Ripple) }
+fn d_pal_fire() -> Palette { d_pal(EffectKind::Fire) }
+fn d_30() -> u8 { 30 }
+fn d_40() -> u8 { 40 }
+fn d_50() -> u8 { 50 }
+fn d_60() -> u8 { 60 }
+fn d_18() -> u8 { 18 }
+fn d_12() -> u8 { 12 }
+fn d_0_u16() -> u16 { 0 }
+fn d_1200() -> u32 { 1200 }
+fn d_800() -> u32 { 800 }
+fn d_1_5() -> f32 { 1.5 }
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Setup {
+    #[serde(default = "d_name")]
     pub name: String,
+    #[serde(default = "d_fps", deserialize_with = "clamp_u32")]
     pub fps: u32,
+    #[serde(default = "d_100", deserialize_with = "clamp_u8")]
     pub brightness: u8,
     /// Bottom layer first.
+    #[serde(default)]
     pub layers: Vec<Layer>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Layer {
+    #[serde(default = "d_true")]
     pub enabled: bool,
+    #[serde(default = "d_100", deserialize_with = "clamp_u8")]
     pub opacity: u8,
     pub effect: Effect,
 }
@@ -37,17 +94,72 @@ impl Palette {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Effect {
-    Static { color: Rgb },
-    Breathing { palette: Palette, speed: u8 },
-    Spectrum { speed: u8 },
+    Static {
+        #[serde(default = "d_white")]
+        color: Rgb,
+    },
+    Breathing {
+        #[serde(default = "d_pal_breathing")]
+        palette: Palette,
+        #[serde(default = "d_30", deserialize_with = "clamp_u8")]
+        speed: u8,
+    },
+    Spectrum {
+        #[serde(default = "d_30", deserialize_with = "clamp_u8")]
+        speed: u8,
+    },
     /// direction in degrees: 0 left to right, 90 bottom to top, 180 right to left, 270 top to bottom.
     /// band is the width of one colour band in keys.
-    Wave { palette: Palette, speed: u8, direction: u16, band: u8 },
-    Wheel { palette: Palette, speed: u8, clockwise: bool },
-    Starlight { palette: Palette, density: u8, duration_ms: u32 },
-    Reactive { palette: Palette, duration_ms: u32 },
-    Ripple { palette: Palette, speed: u8, reach: u8, thickness: f32 },
-    Fire { palette: Palette, speed: u8, height: u8 },
+    Wave {
+        #[serde(default = "d_pal_wave")]
+        palette: Palette,
+        #[serde(default = "d_40", deserialize_with = "clamp_u8")]
+        speed: u8,
+        #[serde(default = "d_0_u16", deserialize_with = "clamp_u16")]
+        direction: u16,
+        #[serde(default = "d_18", deserialize_with = "clamp_u8")]
+        band: u8,
+    },
+    Wheel {
+        #[serde(default = "d_pal_wheel")]
+        palette: Palette,
+        #[serde(default = "d_30", deserialize_with = "clamp_u8")]
+        speed: u8,
+        #[serde(default = "d_true")]
+        clockwise: bool,
+    },
+    Starlight {
+        #[serde(default = "d_pal_starlight")]
+        palette: Palette,
+        #[serde(default = "d_30", deserialize_with = "clamp_u8")]
+        density: u8,
+        #[serde(default = "d_1200", deserialize_with = "clamp_u32")]
+        duration_ms: u32,
+    },
+    Reactive {
+        #[serde(default = "d_pal_reactive")]
+        palette: Palette,
+        #[serde(default = "d_800", deserialize_with = "clamp_u32")]
+        duration_ms: u32,
+    },
+    Ripple {
+        #[serde(default = "d_pal_ripple")]
+        palette: Palette,
+        #[serde(default = "d_50", deserialize_with = "clamp_u8")]
+        speed: u8,
+        #[serde(default = "d_12", deserialize_with = "clamp_u8")]
+        reach: u8,
+        #[serde(default = "d_1_5", deserialize_with = "clamp_f32")]
+        thickness: f32,
+    },
+    Fire {
+        #[serde(default = "d_pal_fire")]
+        palette: Palette,
+        #[serde(default = "d_50", deserialize_with = "clamp_u8")]
+        speed: u8,
+        #[serde(default = "d_60", deserialize_with = "clamp_u8")]
+        height: u8,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -270,5 +382,46 @@ mod tests {
             }
             _ => panic!(),
         }
+    }
+    #[test]
+    fn missing_fields_get_defaults() {
+        let s: Setup = serde_json::from_str(r##"{"layers":[{"effect":{"type":"static","color":"#102030"}}]}"##).unwrap();
+        assert_eq!(s.name, "Default");
+        assert_eq!(s.fps, 30);
+        assert_eq!(s.brightness, 100);
+        assert_eq!(s.layers.len(), 1);
+        assert!(s.layers[0].enabled);
+        assert_eq!(s.layers[0].opacity, 100);
+        for k in EffectKind::ALL {
+            if k == EffectKind::Static {
+                continue;
+            }
+            let tag = serde_json::to_value(Effect::default_for(k)).unwrap()["type"].as_str().unwrap().to_string();
+            let e: Effect = serde_json::from_str(&format!("{{\"type\":\"{tag}\"}}")).unwrap();
+            assert_eq!(e, Effect::default_for(k));
+        }
+        let s: Setup = serde_json::from_str("{}").unwrap();
+        assert!(s.layers.is_empty());
+    }
+    #[test]
+    fn oversized_numbers_clamp_instead_of_failing() {
+        let j = r#"{"fps":5000,"brightness":-4,"layers":[{"opacity":300,"effect":{"type":"spectrum","speed":999}}]}"#;
+        let s: Setup = serde_json::from_str(j).unwrap();
+        assert_eq!(s.layers[0].opacity, 255);
+        assert_eq!(s.brightness, 0);
+        assert_eq!(s.fps, 5000);
+        let s = s.sanitized();
+        assert_eq!(s.layers[0].opacity, 100);
+        assert_eq!(s.fps, 60);
+        assert_eq!(s.brightness, 0);
+        assert_eq!(s.layers[0].effect, Effect::Spectrum { speed: 100 });
+    }
+    #[test]
+    fn wrong_shapes_are_still_errors() {
+        assert!(serde_json::from_str::<Setup>(r#"{"layers":[{"effect":{"type":"disco"}}]}"#).is_err());
+        assert!(serde_json::from_str::<Setup>(r#"{"layers":[{"effect":{"speed":5}}]}"#).is_err());
+        assert!(serde_json::from_str::<Setup>(r#"{"fps":"fast"}"#).is_err());
+        assert!(serde_json::from_str::<Setup>(r#"{"layers":[{"opacity":"high","effect":{"type":"spectrum"}}]}"#).is_err());
+        assert!(serde_json::from_str::<Setup>(r#"{"layers":[{"effect":{"type":"spectrum","speed":"x"}}]}"#).is_err());
     }
 }

@@ -103,7 +103,7 @@ impl Store {
     /// A missing file gives the owner default; unreadable or invalid JSON is an error.
     pub fn load_active(&self) -> Result<Setup> {
         match fs::read(self.active_path()) {
-            Ok(b) => Ok(serde_json::from_slice(&b)?),
+            Ok(b) => Ok(serde_json::from_slice::<Setup>(&b)?.sanitized()),
             Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(Setup::owner_default()),
             Err(e) => Err(e.into()),
         }
@@ -134,7 +134,7 @@ impl Store {
     }
 
     pub fn load_setup(&self, name: &str) -> Result<Setup> {
-        Ok(serde_json::from_slice(&fs::read(self.setup_path(name)?)?)?)
+        Ok(serde_json::from_slice::<Setup>(&fs::read(self.setup_path(name)?)?)?.sanitized())
     }
 
     pub fn save_setup(&self, setup: &Setup) -> Result<()> {
@@ -257,5 +257,18 @@ mod tests {
         let st = Status { pid: 42, keyboard: true, detail: "ok".into() };
         write_status(&p, &st).unwrap();
         assert_eq!(read_status(&p), Some(st));
+    }
+    #[test]
+    fn hand_edited_active_file_with_gaps_loads() {
+        let (_d, s) = store();
+        std::fs::create_dir_all(s.active_path().parent().unwrap()).unwrap();
+        std::fs::write(s.active_path(), r#"{"fps":5000,"layers":[{"opacity":300,"effect":{"type":"spectrum"}}]}"#).unwrap();
+        let x = s.load_active().unwrap();
+        assert_eq!(x.name, "Default");
+        assert_eq!(x.brightness, 100);
+        assert_eq!(x.fps, 60);
+        assert_eq!(x.layers[0].opacity, 100);
+        std::fs::write(s.active_path(), r#"{"layers":[{"effect":{"type":"disco"}}]}"#).unwrap();
+        assert!(matches!(s.load_active(), Err(StoreError::Json(_))));
     }
 }
