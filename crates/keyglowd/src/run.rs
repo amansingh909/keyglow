@@ -4,8 +4,10 @@
 //! Wake-up rules (see [`next_wait`]): with no keyboard, rescan every 2 s; while the hardware
 //! brightness reads 0, read it again every 2 s and draw nothing; while the engine animates (or
 //! a change is waiting to be shown), wake at the next frame time; while still, wake only to
-//! resend the last frame every 5 s. Events (key presses, settings writes, signals) wake it
-//! sooner. While drawing, the brightness is read at most every 2 s, just before a frame.
+//! resend the last frame every 5 s. While the keyboard is there but its key event files aren't
+//! all open (or their folder isn't watched), look for them every 2 s as well. Events (key
+//! presses, settings writes, new key links, signals) wake it sooner. While drawing, the
+//! brightness is read at most every 2 s, just before a frame.
 
 use crate::device::{self, Keyboard};
 use crate::input::{self, KeyFile, Read};
@@ -84,6 +86,9 @@ struct Daemon<'a> {
     start: Instant,
     keyboard: Option<Keyboard>,
     keys: Vec<KeyFile>,
+    /// Every key event link is open and their folder is watched, so no 2 s retry is needed.
+    keys_complete: bool,
+    next_key_scan: Instant,
     /// Why the settings folder can't be watched, for the status file.
     watch_error: Option<String>,
     /// Why `active.json` couldn't be loaded, for the status file.
@@ -132,6 +137,8 @@ impl<'a> Daemon<'a> {
             start: now,
             keyboard: None,
             keys: Vec::new(),
+            keys_complete: false,
+            next_key_scan: now,
             watch_error,
             settings_error,
             keyboard_error: None,
@@ -181,6 +188,9 @@ impl<'a> Daemon<'a> {
         if self.keyboard.is_none() && now >= self.next_rescan {
             self.rescan(now);
         }
+        if self.keyboard.is_some() && !self.keys_complete && now >= self.next_key_scan {
+            self.scan_keys(now);
+        }
         if self.keyboard.is_some() && self.dimmed && now >= self.next_brightness {
             self.check_brightness(now);
         }
@@ -199,11 +209,16 @@ impl<'a> Daemon<'a> {
         }
         let now = Instant::now();
         let wait = self.wait_at(now);
-        match (self.keyboard.is_some(), self.dimmed) {
-            // Woken early by an event: keep the 2 s timers on their own schedule.
+        // Woken early by an event: keep the 2 s timers on their own schedule.
+        let wait = match (self.keyboard.is_some(), self.dimmed) {
             (false, _) => wait.min(self.next_rescan.saturating_duration_since(now)),
             (true, true) => wait.min(self.next_brightness.saturating_duration_since(now)),
             (true, false) => wait,
+        };
+        if self.keyboard.is_some() && !self.keys_complete {
+            wait.min(self.next_key_scan.saturating_duration_since(now))
+        } else {
+            wait
         }
     }
 
@@ -271,7 +286,7 @@ impl<'a> Daemon<'a> {
                 }
                 self.keyboard = Some(keyboard);
                 self.keyboard_error = None;
-                self.reopen_keys();
+                self.reopen_keys(now);
                 self.dirty = true;
                 self.dimmed = false;
                 self.last_frame = None;
@@ -297,9 +312,29 @@ impl<'a> Daemon<'a> {
         self.status_changed = true;
     }
 
-    fn reopen_keys(&mut self) {
+    /// Closes the key event files and opens the current ones (a newly found keyboard).
+    fn reopen_keys(&mut self, now: Instant) {
         self.keys.clear();
-        self.keys = input::find(&self.opts.input_dir).iter().filter_map(|p| KeyFile::open(p).ok()).collect();
+        self.scan_keys(now);
+    }
+
+    /// Opens the key event files that aren't open yet, after watching their folder again if
+    /// it went away. Until every one is open (udev may not have made the links yet, or their
+    /// access rights), the step retries every 2 s.
+    fn scan_keys(&mut self, now: Instant) {
+        self.next_key_scan = now + RESCAN;
+        self.watcher.watch_inputs();
+        let found = input::find(&self.opts.input_dir);
+        for path in &found {
+            if !self.keys.iter().any(|k| k.path() == path) {
+                if let Ok(key) = KeyFile::open(path) {
+                    self.keys.push(key);
+                }
+            }
+        }
+        self.keys_complete = self.watcher.inputs_watched()
+            && !self.keys.is_empty()
+            && found.iter().all(|p| self.keys.iter().any(|k| k.path() == p));
     }
 
     fn on_watch_events(&mut self) {
@@ -313,7 +348,7 @@ impl<'a> Daemon<'a> {
             self.status_changed = true;
         }
         if changes.inputs && self.keyboard.is_some() {
-            self.reopen_keys();
+            self.scan_keys(Instant::now());
         }
     }
 
@@ -362,7 +397,9 @@ impl<'a> Daemon<'a> {
                 index += 1;
             } else {
                 // Unplugged: the keyboard's folder will be gone too, which the next write shows.
+                // Until then (or if it was only this file), look for the links again.
                 self.keys.remove(index);
+                self.keys_complete = false;
             }
         }
     }

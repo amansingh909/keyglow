@@ -73,6 +73,7 @@ impl Records {
 
 /// One open key event file, read without grabbing it so typing still works everywhere.
 pub struct KeyFile {
+    path: PathBuf,
     file: File,
     records: Records,
 }
@@ -87,7 +88,11 @@ pub enum Read {
 impl KeyFile {
     pub fn open(path: &Path) -> io::Result<KeyFile> {
         let file = OpenOptions::new().read(true).custom_flags(nix::libc::O_NONBLOCK).open(path)?;
-        Ok(KeyFile { file, records: Records::default() })
+        Ok(KeyFile { path: path.to_path_buf(), file, records: Records::default() })
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
     }
 
     pub fn file(&self) -> &File {

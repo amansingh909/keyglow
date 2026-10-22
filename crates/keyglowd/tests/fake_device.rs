@@ -26,6 +26,15 @@ impl Daemon {
     /// Starts keyglowd with a settings folder holding one Static layer of `hex`
     /// (or no settings folder at all when `hex` is None) and an empty key event folder.
     fn start(hex: Option<&str>, prepare_sysfs: impl FnOnce(&Path)) -> Daemon {
+        Daemon::launch(hex, prepare_sysfs, true)
+    }
+
+    /// Like `start`, but the key event folder doesn't exist yet (keyboard unplugged at login).
+    fn start_without_key_folder(hex: Option<&str>, prepare_sysfs: impl FnOnce(&Path)) -> Daemon {
+        Daemon::launch(hex, prepare_sysfs, false)
+    }
+
+    fn launch(hex: Option<&str>, prepare_sysfs: impl FnOnce(&Path), key_folder: bool) -> Daemon {
         let tmp = tempfile::tempdir().unwrap();
         let d = Daemon::paths(tmp.path());
         if let Some(hex) = hex {
@@ -33,7 +42,9 @@ impl Daemon {
             fs::write(d.config.join("active.json"), static_setup(hex)).unwrap();
         }
         fs::create_dir_all(&d.sysfs).unwrap();
-        fs::create_dir_all(&d.input).unwrap();
+        if key_folder {
+            fs::create_dir_all(&d.input).unwrap();
+        }
         prepare_sysfs(&d.sysfs);
         let child = Command::new(env!("CARGO_BIN_EXE_keyglowd"))
             .arg("--config-dir")
@@ -376,6 +387,81 @@ fn a_key_press_lights_its_grid_cell() {
             "unexpected message: {line}"
         );
     }
+}
+
+const KEY_LINK: &str = "usb-Razer_Razer_BlackWidow_V3_Tenkeyless-event-kbd";
+const REACTIVE: &str = r#"{"name":"keys","layers":[{"effect":{"type":"reactive"}}]}"#;
+/// Space is row 5, column 7: bytes 5 * 57 + 3 + 7 * 3 of the frame.
+const SPACE: usize = 5 * 57 + 3 + 7 * 3;
+
+fn space_lit(frame: &[u8]) -> bool {
+    frame.len() == 342 && frame[SPACE..SPACE + 3] != [0, 0, 0]
+}
+
+/// A named pipe standing in for a key event file.
+fn make_key_link(link: &Path) {
+    assert!(Command::new("mkfifo").arg(link).status().unwrap().success());
+}
+
+/// The pipe's write end, once keyglowd holds the read end open (it can't be opened before).
+fn key_writer(link: &Path, limit: Duration) -> Option<fs::File> {
+    use std::os::unix::fs::OpenOptionsExt;
+    let open = || fs::OpenOptions::new().write(true).custom_flags(nix::libc::O_NONBLOCK).open(link);
+    wait_until(limit, || open().is_ok()).then(|| open().unwrap())
+}
+
+fn press_space(pipe: &mut fs::File) {
+    use std::io::Write;
+    pipe.write_all(&[key_event(1, 57, 1), key_event(0, 0, 0), key_event(1, 57, 0), key_event(0, 0, 0)].concat())
+        .unwrap();
+}
+
+#[test]
+fn opens_key_links_whose_folder_appears_later() {
+    let daemon = Daemon::start_without_key_folder(None, |sysfs| {
+        fake_device(sysfs, "0003:1532:0A24.0016", "255\n");
+    });
+    fs::create_dir_all(&daemon.p().config).unwrap();
+    daemon.save(REACTIVE);
+    let dev = daemon.device("0003:1532:0A24.0016");
+    assert!(wait_until(SECOND, || read(&dev.join(FRAME_FILE)) == solid("#000000")));
+
+    // udev makes the folder and the links after the lighting files are already there.
+    fs::create_dir(&daemon.p().input).unwrap();
+    let link = daemon.p().input.join(KEY_LINK);
+    make_key_link(&link);
+    let mut pipe = key_writer(&link, Duration::from_secs(3)).expect("keyglowd never opened the key link");
+    press_space(&mut pipe);
+    assert!(wait_until(SECOND, || space_lit(&read(&dev.join(FRAME_FILE)))), "the press never reached the frame");
+}
+
+#[test]
+fn opens_key_links_again_after_their_folder_is_recreated() {
+    let daemon = Daemon::start(None, |sysfs| {
+        fake_device(sysfs, "0003:1532:0A24.0016", "255\n");
+    });
+    fs::create_dir_all(&daemon.p().config).unwrap();
+    daemon.save(REACTIVE);
+    let dev = daemon.device("0003:1532:0A24.0016");
+    // Wait for the reactive setup to show, so the press isn't dropped by the reload.
+    assert!(wait_until(SECOND, || read(&dev.join(FRAME_FILE)) == solid("#000000")));
+    let link = daemon.p().input.join(KEY_LINK);
+    make_key_link(&link);
+    let mut pipe = key_writer(&link, Duration::from_secs(3)).expect("keyglowd never opened the key link");
+    press_space(&mut pipe);
+    assert!(wait_until(SECOND, || space_lit(&read(&dev.join(FRAME_FILE)))));
+    assert!(wait_until(Duration::from_secs(2), || read(&dev.join(FRAME_FILE)) == solid("#000000")));
+
+    // The key side goes away (the event file hangs up and udev removes the folder)...
+    drop(pipe);
+    fs::remove_dir_all(&daemon.p().input).unwrap();
+    std::thread::sleep(Duration::from_millis(200));
+    // ...and comes back.
+    fs::create_dir(&daemon.p().input).unwrap();
+    make_key_link(&link);
+    let mut pipe = key_writer(&link, Duration::from_secs(3)).expect("keyglowd never reopened the key link");
+    press_space(&mut pipe);
+    assert!(wait_until(SECOND, || space_lit(&read(&dev.join(FRAME_FILE)))), "the press never reached the frame");
 }
 
 #[test]

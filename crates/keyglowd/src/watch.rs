@@ -26,6 +26,9 @@ pub struct Watcher {
     inotify: Inotify,
     config_dir: PathBuf,
     config_wd: Option<WatchDescriptor>,
+    input_dir: PathBuf,
+    /// None while the folder is missing: udev removes it when the last input device using
+    /// it goes, and on this machine that is the keyboard.
     input_wd: Option<WatchDescriptor>,
 }
 
@@ -34,11 +37,15 @@ impl Watcher {
     /// [`Watcher::watch_config`].
     pub fn new(config_dir: &Path, input_dir: &Path) -> io::Result<Watcher> {
         let inotify = Inotify::init(InitFlags::IN_NONBLOCK | InitFlags::IN_CLOEXEC)?;
-        // udev makes the by-id links with a rename (newer) or directly (older).
-        let input_wd = inotify
-            .add_watch(input_dir, AddWatchFlags::IN_CREATE | AddWatchFlags::IN_MOVED_TO | AddWatchFlags::IN_ONLYDIR)
-            .ok();
-        Ok(Watcher { inotify, config_dir: config_dir.to_path_buf(), config_wd: None, input_wd })
+        let mut watcher = Watcher {
+            inotify,
+            config_dir: config_dir.to_path_buf(),
+            config_wd: None,
+            input_dir: input_dir.to_path_buf(),
+            input_wd: None,
+        };
+        watcher.watch_inputs();
+        Ok(watcher)
     }
 
     /// Creates the settings folder if it doesn't exist yet, then watches it.
@@ -57,6 +64,23 @@ impl Watcher {
             | AddWatchFlags::IN_ONLYDIR;
         self.config_wd = Some(self.inotify.add_watch(&self.config_dir, mask)?);
         Ok(())
+    }
+
+    /// Watches the key event link folder if it isn't watched (it may not exist yet).
+    pub fn watch_inputs(&mut self) {
+        if self.input_wd.is_none() {
+            // udev makes the by-id links with a rename (newer) or directly (older).
+            let mask = AddWatchFlags::IN_CREATE
+                | AddWatchFlags::IN_MOVED_TO
+                | AddWatchFlags::IN_DELETE_SELF
+                | AddWatchFlags::IN_MOVE_SELF
+                | AddWatchFlags::IN_ONLYDIR;
+            self.input_wd = self.inotify.add_watch(&self.input_dir, mask).ok();
+        }
+    }
+
+    pub fn inputs_watched(&self) -> bool {
+        self.input_wd.is_some()
     }
 
     /// Reads every pending event without blocking.
@@ -86,8 +110,18 @@ impl Watcher {
                     } else if ev.name.as_deref() == Some(ACTIVE_FILE.as_ref()) {
                         changes.settings = true;
                     }
-                } else if Some(ev.wd) == self.input_wd && ev.name.as_deref().is_some_and(input::is_keyboard_link) {
-                    changes.inputs = true;
+                } else if Some(ev.wd) == self.input_wd {
+                    if ev.mask.intersects(
+                        AddWatchFlags::IN_DELETE_SELF | AddWatchFlags::IN_MOVE_SELF | AddWatchFlags::IN_IGNORED,
+                    ) {
+                        // The folder is gone (or moved): drop the watch so it can be set again.
+                        if let Some(wd) = self.input_wd.take() {
+                            let _ = self.inotify.rm_watch(wd);
+                        }
+                        changes.inputs = true;
+                    } else if ev.name.as_deref().is_some_and(input::is_keyboard_link) {
+                        changes.inputs = true;
+                    }
                 }
             }
         }
@@ -194,6 +228,35 @@ mod tests {
         assert_eq!(w.read(), Changes::default());
         std::os::unix::fs::symlink("../event7", d.input.join("usb-Razer_Razer_BlackWidow_V3_Tenkeyless-event-kbd"))
             .unwrap();
+        assert_eq!(w.read(), Changes { inputs: true, ..Changes::default() });
+    }
+
+    #[test]
+    fn watches_the_input_folder_again_when_it_comes_back() {
+        let d = dirs();
+        fs::remove_dir(&d.input).unwrap();
+        let mut w = Watcher::new(&d.config, &d.input).unwrap();
+        w.watch_config().unwrap();
+        assert!(!w.inputs_watched());
+        w.watch_inputs();
+        assert!(!w.inputs_watched(), "still missing");
+
+        fs::create_dir(&d.input).unwrap();
+        w.watch_inputs();
+        assert!(w.inputs_watched());
+        let link = d.input.join("usb-Razer_Razer_BlackWidow_V3_Tenkeyless-event-kbd");
+        std::os::unix::fs::symlink("../event7", &link).unwrap();
+        assert_eq!(w.read(), Changes { inputs: true, ..Changes::default() });
+
+        // Unplugged: udev removes the folder, and the watch goes with it.
+        fs::remove_dir_all(&d.input).unwrap();
+        assert_eq!(w.read(), Changes { inputs: true, ..Changes::default() });
+        assert!(!w.inputs_watched());
+
+        fs::create_dir(&d.input).unwrap();
+        w.watch_inputs();
+        assert!(w.inputs_watched());
+        std::os::unix::fs::symlink("../event9", &link).unwrap();
         assert_eq!(w.read(), Changes { inputs: true, ..Changes::default() });
     }
 
