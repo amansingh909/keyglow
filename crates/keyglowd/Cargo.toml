@@ -5,3 +5,7 @@ edition = "2021"
 
 [dependencies]
 keyglow-core = { path = "../keyglow-core" }
+nix = { version = "0.31", default-features = false, features = ["poll", "inotify", "signal"] }
+
+[dev-dependencies]
+tempfile = "3"

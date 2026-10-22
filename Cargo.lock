@@ -122,6 +122,8 @@ name = "keyglowd"
 version = "0.1.0"
 dependencies = [
  "keyglow-core",
+ "nix",
+ "tempfile",
 ]
 
 [[package]]
