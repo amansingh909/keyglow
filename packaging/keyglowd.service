@@ -1,0 +1,14 @@
+[Unit]
+Description=Keyglow keyboard lighting
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/keyglowd
+Restart=on-failure
+RestartSec=3
+Nice=10
+CPUQuota=15%
+MemoryMax=64M
+
+[Install]
+WantedBy=default.target
