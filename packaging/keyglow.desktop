@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Keyglow
+Comment=Keyboard lighting
+Exec=@KEYGLOW_BIN@
+Terminal=false
+Categories=Utility;Settings;
