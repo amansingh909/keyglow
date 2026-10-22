@@ -53,7 +53,8 @@ else
 fi
 
 echo "Building Keyglow (this takes a few minutes the first time)."
-(cd "$here" && nice -n 10 "$cargo" build --release --workspace)
+# A few jobs at low priority: building on every core has cut the power on this laptop on battery.
+(cd "$here" && CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-4}" nice -n 10 "$cargo" build --release --workspace)
 
 mkdir -p "$bin_dir" "$unit_dir" "$app_dir"
 
