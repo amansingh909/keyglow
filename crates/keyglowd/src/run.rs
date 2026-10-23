@@ -12,6 +12,7 @@
 
 use crate::device::{self, Keyboard};
 use crate::input::{self, KeyFile, Read};
+use crate::slice;
 use crate::watch::Watcher;
 use keyglow_core::engine::Engine;
 use keyglow_core::frame::encode;
@@ -76,6 +77,13 @@ pub fn run(opts: &Options) -> io::Result<()> {
     mask.add(Signal::SIGINT);
     mask.thread_block()?;
     let signals = SignalFd::with_flags(&mask, SfdFlags::SFD_NONBLOCK | SfdFlags::SFD_CLOEXEC)?;
+    match slice::request() {
+        Ok(true) => {}
+        Ok(false) => eprintln!(
+            "keyglowd: the kernel gave no short time slice (Linux 6.12 and later do), so frames may lag while the computer is busy"
+        ),
+        Err(e) => eprintln!("keyglowd: can't ask for a short time slice ({e}), so frames may lag while the computer is busy"),
+    }
     Daemon::start(opts)?.run(&signals)
 }
 

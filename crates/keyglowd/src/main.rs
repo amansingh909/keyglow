@@ -3,6 +3,7 @@
 mod device;
 mod input;
 mod run;
+mod slice;
 mod watch;
 
 use std::ffi::OsString;
