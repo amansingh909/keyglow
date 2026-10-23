@@ -991,7 +991,9 @@ mod tests {
         let ctx = egui::Context::default();
         configure(&ctx);
         // With nothing happening, the only wake-up asked for is the status line's, once a second.
-        let delay = frames(&ctx, &mut app, 4);
+        // The colour picker makes the panel scroll at this size, and the scroll bar fades in
+        // over egui's 0.2 s animation; a headless frame moves time on by 1/60 s, so give it 20.
+        let delay = frames(&ctx, &mut app, 20);
         assert!(delay >= Duration::from_millis(900), "repaint delay {delay:?}");
         assert!(!app.dirty);
         assert!(app.store.load_active().is_ok());
@@ -1026,6 +1028,46 @@ mod tests {
         frames(&ctx, &mut app, 1);
         assert!(!app.dirty);
         assert!(app.store.load_active().unwrap().layers.is_empty());
+    }
+
+    /// Pairs of clickable widgets drawn over each other in the last frame. A widget lying wholly
+    /// inside another (a button in a scroll area) is how containers work, so only partial
+    /// overlaps count.
+    fn overlapping_widgets(ctx: &egui::Context) -> Vec<(egui::Rect, egui::Rect)> {
+        let widgets = ctx.viewport(|vp| vp.prev_pass.widgets.clone());
+        let mut found = Vec::new();
+        for (_, rects) in widgets.layers() {
+            let clickable: Vec<egui::Rect> = rects
+                .iter()
+                .filter(|w| w.visible && (w.sense.senses_click() || w.sense.senses_drag()))
+                .map(|w| w.interact_rect)
+                .filter(|r| r.is_positive())
+                .collect();
+            for (i, &a) in clickable.iter().enumerate() {
+                for &b in &clickable[..i] {
+                    if a.intersect(b).area() > 1.0 && !a.contains_rect(b) && !b.contains_rect(a) {
+                        found.push((a, b));
+                    }
+                }
+            }
+        }
+        found
+    }
+
+    #[test]
+    fn no_editor_draws_widgets_over_each_other() {
+        let (_d, mut app) = app();
+        let ctx = egui::Context::default();
+        configure(&ctx);
+        app.setup.layers.clear();
+        for kind in EffectKind::ALL {
+            let i = model::add_layer(&mut app.setup, kind);
+            app.select(Some(i));
+            // The first frames size new grids; check once the layout has settled.
+            frames(&ctx, &mut app, 3);
+            let overlaps = overlapping_widgets(&ctx);
+            assert!(overlaps.is_empty(), "{} editor: {overlaps:?}", kind.label());
+        }
     }
 
     #[test]

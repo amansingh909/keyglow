@@ -177,6 +177,30 @@ pub fn next_new_color(existing: &[Rgb]) -> Rgb {
     CHOICES.iter().filter_map(|h| Rgb::from_hex(h)).find(|c| !existing.contains(c)).unwrap_or(Rgb::WHITE)
 }
 
+/// One-click colours in the colour picker: the hues around the wheel, then the owner's own
+/// cyan, purple and pink among the pinks and purples, whites, and black (unlit).
+pub const QUICK_COLORS: [&str; 18] = [
+    "#FF0000", "#FF5A00", "#FFC800", "#7FFF00", "#00FF00", "#00FF80", "#03FFFA", "#0080FF", "#0000FF",
+    "#6A00FF", "#55007F", "#B000FF", "#F701FF", "#FF0080", "#FF7FB0", "#FFFFFF", "#FFB46E", "#000000",
+];
+
+pub fn quick_colors() -> impl Iterator<Item = Rgb> {
+    QUICK_COLORS.iter().filter_map(|h| Rgb::from_hex(h))
+}
+
+/// What the picker's colour, vividness and brightness sliders show for `color`. `last` is what
+/// they showed before and the colour that made; it is kept while it still makes `color`, so a
+/// white or black keeps the hue it was dragged from.
+pub fn picker_hsv(color: Rgb, last: Option<(Rgb, [f32; 3])>) -> [f32; 3] {
+    match last {
+        Some((made, hsv)) if made == color => hsv,
+        _ => {
+            let (h, s, v) = keyglow_core::color::to_hsv(color);
+            [h, s, v]
+        }
+    }
+}
+
 /// Quick direction buttons for Wave, in degrees (0 left to right, 90 bottom to top,
 /// 180 right to left, 270 top to bottom). Each names where the wave travels to.
 pub const DIRECTIONS: [(&str, u16); 4] = [("Left", 180), ("Right", 0), ("Up", 90), ("Down", 270)];
@@ -281,6 +305,29 @@ pub fn keyglowd_alive(pid: u32) -> bool {
 mod tests {
     use super::*;
     use keyglow_core::setup::Setup;
+
+    #[test]
+    fn quick_colours_are_distinct_and_include_the_owners() {
+        let quick: Vec<Rgb> = quick_colors().collect();
+        assert_eq!(quick.len(), QUICK_COLORS.len(), "every quick colour is a valid hex code");
+        for (i, c) in quick.iter().enumerate() {
+            assert!(!quick[..i].contains(c), "{} is listed twice", c.hex());
+        }
+        for hex in ["#03FFFA", "#55007F", "#F701FF", "#FFFFFF"] {
+            assert!(quick.contains(&Rgb::from_hex(hex).unwrap()), "{hex} missing");
+        }
+    }
+
+    #[test]
+    fn the_picker_keeps_its_hue_on_greys_until_the_colour_changes_elsewhere() {
+        let cyan = Rgb::from_hex("#03FFFA").unwrap();
+        let (h, s, v) = keyglow_core::color::to_hsv(cyan);
+        assert_eq!(picker_hsv(cyan, None), [h, s, v]);
+        // Vividness dragged to 0 made white; the hue stays where it was.
+        assert_eq!(picker_hsv(Rgb::WHITE, Some((Rgb::WHITE, [0.5, 0.0, 1.0]))), [0.5, 0.0, 1.0]);
+        // A quick colour or a typed hex code changed it: read the new colour afresh.
+        assert_eq!(picker_hsv(Rgb { r: 255, g: 0, b: 0 }, Some((Rgb::WHITE, [0.5, 0.0, 1.0]))), [0.0, 1.0, 1.0]);
+    }
 
     fn kinds_top_first(s: &Setup) -> Vec<EffectKind> {
         display_order(s).into_iter().map(|i| s.layers[i].effect.kind()).collect()

@@ -5,9 +5,9 @@ edition = "2021"
 
 [dependencies]
 keyglow-core = { path = "../keyglow-core" }
-# The glow (OpenGL) renderer only, with Wayland and an X11 fallback. No wgpu, no accesskit,
-# no system font scan, no clipboard or link-opening extras.
-eframe = { version = "0.37", default-features = false, features = ["default_fonts", "glow", "wayland", "x11"] }
+# The glow (OpenGL) renderer only, with Wayland and an X11 fallback, and the clipboard so hex
+# codes can be pasted. No wgpu, no accesskit, no system font scan, no link opening.
+eframe = { version = "0.37", default-features = false, features = ["clipboard", "default_fonts", "glow", "wayland", "x11"] }
 # The file dialog goes through the xdg desktop portal only (no GTK).
 rfd = { version = "0.17", default-features = false, features = ["xdg-portal"] }
 

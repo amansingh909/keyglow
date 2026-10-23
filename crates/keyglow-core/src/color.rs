@@ -60,6 +60,24 @@ pub fn hsv(h: f32, s: f32, v: f32) -> Rgb {
     Rgb { r: byte(r), g: byte(g), b: byte(b) }
 }
 
+/// The reverse of `hsv`: hue in 0..1, saturation and value in 0..1. Greys get hue 0.
+pub fn to_hsv(c: Rgb) -> (f32, f32, f32) {
+    let (r, g, b) = (c.r as f32 / 255.0, c.g as f32 / 255.0, c.b as f32 / 255.0);
+    let max = r.max(g).max(b);
+    let d = max - r.min(g).min(b);
+    if d == 0.0 {
+        return (0.0, 0.0, max);
+    }
+    let h6 = if max == r {
+        ((g - b) / d).rem_euclid(6.0)
+    } else if max == g {
+        (b - r) / d + 2.0
+    } else {
+        (r - g) / d + 4.0
+    };
+    ((h6 / 6.0).rem_euclid(1.0), d / max, max)
+}
+
 pub fn lerp(a: Rgb, b: Rgb, t: f32) -> Rgb {
     let t = t.clamp(0.0, 1.0);
     let m = |x: u8, y: u8| (x as f32 + (y as f32 - x as f32) * t + 0.5) as u8;
@@ -110,6 +128,22 @@ mod tests {
         assert_eq!(hsv(1.0, 1.0, 1.0), Rgb { r: 255, g: 0, b: 0 });
         assert_eq!(hsv(1.0 / 3.0, 1.0, 1.0), Rgb { r: 0, g: 255, b: 0 });
         assert_eq!(hsv(0.0, 0.0, 1.0), Rgb::WHITE);
+    }
+    #[test]
+    fn to_hsv_reads_back_what_hsv_made() {
+        assert_eq!(to_hsv(Rgb { r: 255, g: 0, b: 0 }), (0.0, 1.0, 1.0));
+        for hex in ["#03FFFA", "#55007F", "#F701FF", "#FFFFFF", "#000000", "#808080", "#123456", "#FF7F00"] {
+            let c = Rgb::from_hex(hex).unwrap();
+            let (h, s, v) = to_hsv(c);
+            assert!((0.0..1.0).contains(&h) && (0.0..=1.0).contains(&s) && (0.0..=1.0).contains(&v), "{hex}");
+            assert_eq!(hsv(h, s, v), c, "{hex}");
+        }
+    }
+    #[test]
+    fn to_hsv_of_greys_has_no_saturation() {
+        assert_eq!(to_hsv(Rgb::WHITE), (0.0, 0.0, 1.0));
+        assert_eq!(to_hsv(Rgb::BLACK), (0.0, 0.0, 0.0));
+        assert_eq!(to_hsv(Rgb { r: 51, g: 51, b: 51 }).1, 0.0);
     }
     #[test]
     fn single_colour_gradient_is_that_colour() {
