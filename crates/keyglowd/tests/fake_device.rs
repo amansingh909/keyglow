@@ -350,12 +350,8 @@ fn a_key_press_lights_its_grid_cell() {
     let black = solid("#000000");
     assert!(wait_until(SECOND, || read(&dev.join(FRAME_FILE)) == black));
     // The link appeared after the keyboard was found, so only the folder watch can open it.
-    // Opening a pipe's write end without blocking works once a reader has it open.
     use std::io::Write;
-    use std::os::unix::fs::OpenOptionsExt;
-    let open_writer = || fs::OpenOptions::new().write(true).custom_flags(nix::libc::O_NONBLOCK).open(&link);
-    assert!(wait_until(SECOND, || open_writer().is_ok()), "keyglowd never opened the new key link");
-    let mut pipe = open_writer().unwrap();
+    let mut pipe = key_writer(&link, SECOND).expect("keyglowd never opened the new key link");
     // Space goes down (split mid-record across two writes), repeats, and comes back up.
     let mut bytes = key_event(4, 4, 0x2c);
     bytes.extend(key_event(1, 57, 1));
@@ -404,10 +400,16 @@ fn make_key_link(link: &Path) {
 }
 
 /// The pipe's write end, once keyglowd holds the read end open (it can't be opened before).
+/// The first writer that opens is the one kept: closing a pipe's last writer hangs the pipe
+/// up, which keyglowd takes for an unplugged keyboard, dropping a press written meanwhile.
 fn key_writer(link: &Path, limit: Duration) -> Option<fs::File> {
     use std::os::unix::fs::OpenOptionsExt;
-    let open = || fs::OpenOptions::new().write(true).custom_flags(nix::libc::O_NONBLOCK).open(link);
-    wait_until(limit, || open().is_ok()).then(|| open().unwrap())
+    let mut writer = None;
+    wait_until(limit, || {
+        writer = fs::OpenOptions::new().write(true).custom_flags(nix::libc::O_NONBLOCK).open(link).ok();
+        writer.is_some()
+    });
+    writer
 }
 
 fn press_space(pipe: &mut fs::File) {
