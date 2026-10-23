@@ -34,6 +34,7 @@ Every keyboard above is drawn from real Keyglow frames, made by the same code th
 - The OpenRazer kernel driver (`razerkbd`) installed. The OpenRazer daemon can stay running. When it dims the keyboard for the screen saver, `keyglowd` pauses until the brightness comes back.
 - Your user in the `plugdev` group. No root is needed to run or install Keyglow.
 - Read access to the keyboard's input device, so `keyglowd` can see key presses for Ripple and Reactive. The logged-in user normally has it through the desktop's access list for the device, or through the `input` or `plugdev` group. Without it the lighting still runs, but nothing reacts to keys.
+- Linux 6.12 or newer, so the lighting keeps up while the computer is busy. Older kernels work too, but under load the frames and key presses can lag.
 - Rust, only if you build it yourself (`~/.cargo/bin/cargo` or `cargo` on your PATH).
 - OpenRGB, or anything else that lights the keyboard, turned off for this keyboard. Two programs drawing at once will flicker against each other.
 
@@ -41,10 +42,10 @@ Every keyboard above is drawn from real Keyglow frames, made by the same code th
 
 ### From a release
 
-Download `keyglow-v0.1.0-x86_64-linux.tar.gz` from the [releases page](../../releases), then:
+Download `keyglow-v0.1.1-x86_64-linux.tar.gz` from the [releases page](../../releases), then:
 
-    tar xf keyglow-v0.1.0-x86_64-linux.tar.gz
-    cd keyglow-v0.1.0-x86_64-linux
+    tar xf keyglow-v0.1.1-x86_64-linux.tar.gz
+    cd keyglow-v0.1.1-x86_64-linux
     ./install.sh --enable
 
 The programs in the download are already built, so you don't need Rust. They were built on Pop!_OS 24.04 and need glibc 2.39 or newer (Ubuntu 24.04 and later have it). On an older system, build from source instead.
@@ -101,6 +102,8 @@ The install puts a systemd user service at `~/.config/systemd/user/keyglowd.serv
 ## Cost
 
 While something is animating at 30 frames a second, `keyglowd` uses about 1 to 3% of one core, almost all of it the keyboard driver's USB transfers, and under 3 MB of memory. When nothing is moving it draws nothing and sleeps, except that it resends the last frame every 5 seconds, so another program can't take the keyboard over for long. The window uses nothing when closed and almost nothing when idle.
+
+It also asks the kernel for a short time slice, so it gets a CPU soon after it wakes even while a game or a build keeps every core busy. That changes when it runs, not how much CPU it takes.
 
 ## Files
 
