@@ -97,6 +97,8 @@ struct Daemon<'a> {
     /// The zero of the engine's clock.
     start: Instant,
     keyboard: Option<Keyboard>,
+    /// How the keyboard's key event links are named, when its USB strings could be read.
+    key_prefix: Option<String>,
     keys: Vec<KeyFile>,
     /// Every key event link is open and their folder is watched, so no 2 s retry is needed.
     keys_complete: bool,
@@ -150,6 +152,7 @@ impl<'a> Daemon<'a> {
             setup,
             start: now,
             keyboard: None,
+            key_prefix: None,
             keys: Vec::new(),
             keys_complete: false,
             next_key_scan: now,
@@ -253,12 +256,13 @@ impl<'a> Daemon<'a> {
 
     fn draw(&mut self, now: Instant) {
         let t = self.secs(now);
-        let bytes = encode(&self.engine.render(t));
+        let (rows, cols) = (self.engine.layout().rows, self.engine.layout().cols);
+        let bytes = encode(&self.engine.render(t), rows, cols);
         let Some(keyboard) = self.keyboard.as_mut() else { return };
         match keyboard.show(&bytes) {
             Ok(()) => {
                 if let Some(dir) = self.failing.take() {
-                    eprintln!("keyglowd: keyboard found at {}", dir.display());
+                    eprintln!("keyglowd: keyboard found at {} ({})", dir.display(), keyboard.model().name);
                 }
                 // A frame drawn while moving isn't the settled look: when the movement stops,
                 // one more frame shows how it ends (say, a faded key back to black).
@@ -293,16 +297,18 @@ impl<'a> Daemon<'a> {
     fn rescan(&mut self, now: Instant) {
         self.next_rescan = now + RESCAN;
         self.status_changed = true;
-        let Some(dir) = device::find(&self.opts.sysfs_dir) else {
+        let Some((dir, model)) = device::find(&self.opts.sysfs_dir) else {
             self.keyboard_error = None;
             self.failing = None;
             return;
         };
-        match Keyboard::open(&dir) {
+        match Keyboard::open(&dir, model) {
             Ok(keyboard) => {
                 if self.failing.as_ref() != Some(&dir) {
-                    eprintln!("keyglowd: keyboard found at {}", dir.display());
+                    eprintln!("keyglowd: keyboard found at {} ({})", dir.display(), model.name);
                 }
+                self.engine.set_layout(&model.layout());
+                self.key_prefix = input::link_prefix(&dir);
                 self.keyboard = Some(keyboard);
                 self.keyboard_error = None;
                 self.reopen_keys(now);
@@ -337,13 +343,15 @@ impl<'a> Daemon<'a> {
         self.scan_keys(now);
     }
 
-    /// Opens the key event files that aren't open yet, after watching their folder again if
-    /// it went away. Until every one is open (udev may not have made the links yet, or their
-    /// access rights), the step retries every 2 s.
+    /// Opens the key event files that aren't open yet, and closes any that are no longer the
+    /// keyboard's, after watching their folder again if it went away. Until every one is open
+    /// (udev may not have made the links yet, or their access rights), the step retries every 2 s.
     fn scan_keys(&mut self, now: Instant) {
         self.next_key_scan = now + RESCAN;
         self.watcher.watch_inputs();
-        let found = input::find(&self.opts.input_dir);
+        let found = input::find(&self.opts.input_dir, self.key_prefix.as_deref());
+        // Another Razer keyboard's links stand in until this one's exist (see input::find).
+        self.keys.retain(|k| found.iter().any(|p| p == k.path()));
         for path in &found {
             if !self.keys.iter().any(|k| k.path() == path) {
                 if let Ok(key) = KeyFile::open(path) {
@@ -432,7 +440,10 @@ impl<'a> Daemon<'a> {
             detail.push(format!("settings not loaded: {e}"));
         }
         match (&self.keyboard, &self.keyboard_error) {
-            (Some(k), _) => detail.push(format!("keyboard at {}", k.dir().display())),
+            (Some(k), _) => {
+                let untested = if k.model().tested() { "" } else { ", not yet tested with Keyglow" };
+                detail.push(format!("{} at {}{untested}", k.model().name, k.dir().display()));
+            }
             (None, Some(e)) => detail.push(e.clone()),
             (None, None) => detail.push("keyboard not found".to_string()),
         }

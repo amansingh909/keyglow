@@ -20,10 +20,11 @@ pub(super) fn draw(out: &mut Cover, colors: &Colors, board: &Board, cycles: f64,
     let rise = (cycles * RISE).rem_euclid(PERIOD) as f32;
     let z = (cycles * FLICKER).rem_euclid(PERIOD) as f32;
     let reach = height as f32 / 100.0;
-    let (top, bottom) = (board.pos[0][0].1, board.pos[board.pos.len() - 1][0].1);
+    // A keyboard with a single row is all bottom row.
+    let span = (board.bottom - board.top).max(1.0);
     for (r, c, x, y) in board.cells() {
         // 0 on the bottom row, 1 on the top row.
-        let up = (bottom - y) / (bottom - top);
+        let up = (board.bottom - y) / span;
         let base = 1.0 - up / (reach + 0.05);
         let n = 0.65 * noise(salt, x * 0.55, y * 0.7 + rise, z)
             + 0.35 * noise(salt, x * 1.1, y * 1.4 + 2.0 * rise, 2.0 * z);

@@ -10,16 +10,16 @@ mod wave;
 use std::collections::VecDeque;
 
 use crate::color::{gradient, hsv, lerp, Rgb};
-use crate::keymap::{has_led, key_position};
+use crate::keymap::{key_position, Layout};
 use crate::rng::Rng;
-use crate::setup::{Effect, Palette, COLS, ROWS};
+use crate::setup::{Effect, Palette, MAX_COLS, MAX_ROWS};
 
-pub(crate) type Grid<T> = [[T; COLS]; ROWS];
+pub(crate) type Grid<T> = [[T; MAX_COLS]; MAX_ROWS];
 
 /// One layer's output for a frame: a colour and how much of it covers each cell.
 pub(crate) type Cover = Grid<(Rgb, f32)>;
 
-pub(crate) const EMPTY_COVER: Cover = [[(Rgb::BLACK, 0.0); COLS]; ROWS];
+pub(crate) const EMPTY_COVER: Cover = [[(Rgb::BLACK, 0.0); MAX_COLS]; MAX_ROWS];
 
 /// The most stars, lit keys or rings one layer keeps alive at once.
 pub(crate) const MAX_LIVE: usize = 64;
@@ -63,33 +63,53 @@ fn put(out: &mut Cover, row: usize, col: usize, color: Rgb, coverage: f32) {
     }
 }
 
-/// Things about the keyboard that never change: key centres, the cells with LEDs, the middle.
+/// Things about the keyboard that never change: its grid, key centres, the cells with LEDs,
+/// the middle, and the heights of its top and bottom rows.
 pub(crate) struct Board {
+    layout: Layout,
     pos: Grid<(f32, f32)>,
     leds: Vec<(usize, usize)>,
     centre: (f32, f32),
+    top: f32,
+    bottom: f32,
 }
 
 impl Board {
-    pub(crate) fn new() -> Board {
-        let mut pos = [[(0.0, 0.0); COLS]; ROWS];
-        let mut leds = Vec::new();
-        let (mut lo, mut hi) = ((f32::MAX, f32::MAX), (f32::MIN, f32::MIN));
+    pub(crate) fn new(layout: &Layout) -> Board {
+        let mut pos = [[(0.0, 0.0); MAX_COLS]; MAX_ROWS];
         for (r, row) in pos.iter_mut().enumerate() {
             for (c, p) in row.iter_mut().enumerate() {
                 *p = key_position(r, c);
-                if has_led(r, c) {
-                    leds.push((r, c));
-                    lo = (lo.0.min(p.0), lo.1.min(p.1));
-                    hi = (hi.0.max(p.0), hi.1.max(p.1));
-                }
             }
         }
-        Board { pos, leds, centre: ((lo.0 + hi.0) / 2.0, (lo.1 + hi.1) / 2.0) }
+        let leds = layout.leds().to_vec();
+        let (mut lo, mut hi) = ((f32::MAX, f32::MAX), (f32::MIN, f32::MIN));
+        for &(r, c) in &leds {
+            let p = pos[r][c];
+            lo = (lo.0.min(p.0), lo.1.min(p.1));
+            hi = (hi.0.max(p.0), hi.1.max(p.1));
+        }
+        Board {
+            layout: layout.clone(),
+            pos,
+            leds,
+            centre: ((lo.0 + hi.0) / 2.0, (lo.1 + hi.1) / 2.0),
+            top: key_position(0, 0).1,
+            bottom: key_position(layout.rows - 1, 0).1,
+        }
     }
 
+    pub(crate) fn layout(&self) -> &Layout {
+        &self.layout
+    }
+
+    /// Every cell of the keyboard's grid, with its key centre.
     fn cells(&self) -> impl Iterator<Item = (usize, usize, f32, f32)> + '_ {
-        self.pos.iter().enumerate().flat_map(|(r, row)| row.iter().enumerate().map(move |(c, &(x, y))| (r, c, x, y)))
+        let cols = self.layout.cols;
+        self.pos[..self.layout.rows]
+            .iter()
+            .enumerate()
+            .flat_map(move |(r, row)| row[..cols].iter().enumerate().map(move |(c, &(x, y))| (r, c, x, y)))
     }
 }
 

@@ -3,7 +3,7 @@
 
 use keyglow_core::color::Rgb;
 use keyglow_core::frame::encode;
-use keyglow_core::setup::{COLS, ROWS};
+use keyglow_core::frame::BLACK_FRAME;
 use keyglow_core::store::{read_status, Status};
 use nix::sys::signal::{kill, Signal};
 use nix::unistd::Pid;
@@ -127,9 +127,17 @@ fn static_setup(hex: &str) -> String {
     )
 }
 
-/// The encoded frame with every cell in one colour.
+/// The test keyboard folders are BlackWidow V3 Tenkeyless ones: a 6 by 18 grid.
+const ROWS: usize = 6;
+const COLS: usize = 18;
+
+/// The encoded frame with every key in one colour.
 fn solid(hex: &str) -> Vec<u8> {
-    encode(&[[Rgb::from_hex(hex).unwrap(); COLS]; ROWS])
+    let mut f = BLACK_FRAME;
+    for row in f.iter_mut() {
+        row.fill(Rgb::from_hex(hex).unwrap());
+    }
+    encode(&f, ROWS, COLS)
 }
 
 /// A lighting interface folder with empty write files and the given brightness.
@@ -499,6 +507,56 @@ fn a_key_press_is_drawn_at_once_instead_of_on_the_next_beat() {
     assert!(wait_until(SECOND, || white(&frame())), "the press never reached the frame");
     let took = pressed.elapsed();
     assert!(took < Duration::from_millis(60), "the press waited {took:?} for the next beat");
+}
+
+/// A full-size BlackWidow V3: a 6 by 22 grid, so each row is 3 + 22 * 3 bytes.
+const FULL_SIZE: &str = "0003:1532:024E.0003";
+const FULL_ROW: usize = 3 + 22 * 3;
+
+#[test]
+fn draws_other_keyboard_models_on_their_own_grid() {
+    let daemon = Daemon::start(Some("#102030"), |sysfs| {
+        fake_device(sysfs, FULL_SIZE, "255\n");
+    });
+    let dev = daemon.device(FULL_SIZE);
+    let mut f = BLACK_FRAME;
+    for row in f.iter_mut() {
+        row.fill(Rgb::from_hex("#102030").unwrap());
+    }
+    let full = encode(&f, 6, 22);
+    assert_eq!(full.len(), 6 * FULL_ROW);
+    assert!(wait_until(SECOND, || read(&dev.join(FRAME_FILE)) == full), "no 6 by 22 frame");
+    assert!(wait_until(SECOND, || daemon.status().is_some_and(|s| s.keyboard)), "no status file");
+    let detail = daemon.status().unwrap().detail;
+    assert!(detail.contains("Razer BlackWidow V3 at "), "{detail}");
+    assert!(detail.contains("not yet tested"), "{detail}");
+
+    let (exit, err) = daemon.stop(Signal::SIGTERM);
+    assert_eq!(exit.code(), Some(0), "{err}");
+    assert!(err.contains("keyboard found at ") && err.contains("(Razer BlackWidow V3)"), "{err}");
+}
+
+#[test]
+fn a_number_pad_key_lights_on_a_full_size_keyboard() {
+    let daemon = Daemon::start(None, |sysfs| {
+        fake_device(sysfs, FULL_SIZE, "255\n");
+    });
+    let link = daemon.p().input.join("usb-Razer_Razer_BlackWidow_V3-event-kbd");
+    make_key_link(&link);
+    fs::create_dir_all(&daemon.p().config).unwrap();
+    daemon.save(REACTIVE);
+    let dev = daemon.device(FULL_SIZE);
+    let dark = |f: &[u8]| f.len() == 6 * FULL_ROW && (0..6).all(|r| f[r * FULL_ROW + 3..(r + 1) * FULL_ROW].iter().all(|&b| b == 0));
+    assert!(wait_until(SECOND, || dark(&read(&dev.join(FRAME_FILE)))), "the reactive setup never showed");
+    let mut pipe = key_writer(&link, Duration::from_secs(3)).expect("keyglowd never opened the key link");
+    // Keypad Enter is row 4, column 21.
+    use std::io::Write;
+    pipe.write_all(&[key_event(1, 96, 1), key_event(0, 0, 0), key_event(1, 96, 0), key_event(0, 0, 0)].concat()).unwrap();
+    let enter = 4 * FULL_ROW + 3 + 21 * 3;
+    assert!(
+        wait_until(SECOND, || read(&dev.join(FRAME_FILE)).get(enter..enter + 3).is_some_and(|c| c != [0, 0, 0])),
+        "keypad Enter never lit"
+    );
 }
 
 #[test]

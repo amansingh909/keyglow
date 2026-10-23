@@ -3,8 +3,9 @@
 use crate::color::lerp;
 use crate::effects::{Board, Cover, LayerState, EMPTY_COVER};
 use crate::frame::{scale, Frame, BLACK_FRAME};
+use crate::keymap::Layout;
 use crate::rng::Rng;
-use crate::setup::{Layer, Setup, COLS, ROWS};
+use crate::setup::{Layer, Setup};
 
 /// The most time one frame moves an effect along: a long sleep or a clock step can't jump it.
 const MAX_STEP: f64 = 0.5;
@@ -21,11 +22,23 @@ pub struct Engine {
 }
 
 impl Engine {
+    /// Draws for the BlackWidow V3 Tenkeyless's grid until `set_layout` names another keyboard.
     pub fn new(setup: Setup, seed: u64) -> Engine {
         let mut rng = Rng::new(seed);
         let setup = setup.sanitized();
         let states = fresh_states(&setup, &mut rng);
-        Engine { setup, states, rng, board: Board::new(), last_t: None }
+        Engine { setup, states, rng, board: Board::new(&Layout::tenkeyless()), last_t: None }
+    }
+
+    /// Draws for another keyboard's grid from now on. Running effects carry on.
+    pub fn set_layout(&mut self, layout: &Layout) {
+        if self.board.layout() != layout {
+            self.board = Board::new(layout);
+        }
+    }
+
+    pub fn layout(&self) -> &Layout {
+        self.board.layout()
     }
 
     /// Replaces the setup. A layer whose effect is the same kind as the layer that was at its
@@ -51,7 +64,7 @@ impl Engine {
     /// A key at this grid cell went down at `t` (seconds on a monotonic clock). True when a
     /// layer lights something for it, so the caller can draw it now rather than on the next beat.
     pub fn key_press(&mut self, row: usize, col: usize, t: f64) -> bool {
-        if row >= ROWS || col >= COLS {
+        if !self.layout().contains(row, col) {
             return false;
         }
         let mut lit = false;
@@ -77,7 +90,7 @@ impl Engine {
             if shows(layer) {
                 let mut cover = EMPTY_COVER;
                 state.draw(&layer.effect, t, dt, &self.board, &mut self.rng, &mut cover);
-                mix(&mut frame, &cover, layer.opacity as f32 / 100.0);
+                mix(&mut frame, &cover, layer.opacity as f32 / 100.0, self.board.layout());
             }
         }
         scale(&frame, self.setup.brightness)
@@ -103,9 +116,10 @@ fn shows(layer: &Layer) -> bool {
     layer.enabled && layer.opacity > 0
 }
 
-fn mix(frame: &mut Frame, cover: &Cover, opacity: f32) {
-    for (frame_row, cover_row) in frame.iter_mut().zip(cover) {
-        for (key, &(color, coverage)) in frame_row.iter_mut().zip(cover_row) {
+/// Mixes a layer over the frame, inside the keyboard's grid only.
+fn mix(frame: &mut Frame, cover: &Cover, opacity: f32, layout: &Layout) {
+    for (frame_row, cover_row) in frame.iter_mut().zip(cover).take(layout.rows) {
+        for (key, &(color, coverage)) in frame_row[..layout.cols].iter_mut().zip(cover_row) {
             if coverage > 0.0 {
                 *key = lerp(*key, color, coverage * opacity);
             }
@@ -117,8 +131,15 @@ fn mix(frame: &mut Frame, cover: &Cover, opacity: f32) {
 mod tests {
     use super::*;
     use crate::color::Rgb;
-    use crate::keymap::has_led;
-    use crate::setup::{Effect, EffectKind, Layer, Palette, COLS, ROWS};
+    use crate::setup::{Effect, EffectKind, Layer, Palette};
+
+    /// The tenkeyless grid the engine draws for unless told otherwise.
+    const ROWS: usize = 6;
+    const COLS: usize = 18;
+
+    fn has_led(row: usize, col: usize) -> bool {
+        Layout::tenkeyless().has_led(row, col)
+    }
 
     const RED: Rgb = Rgb { r: 255, g: 0, b: 0 };
     const GREEN: Rgb = Rgb { r: 0, g: 255, b: 0 };
@@ -176,6 +197,44 @@ mod tests {
         assert!(e.key_press(2, 3, 0.0));
         assert!(Engine::new(setup(vec![kind(EffectKind::Reactive)]), 1).key_press(2, 3, 0.0));
         assert!(!e.key_press(ROWS, 0, 0.0), "off the grid");
+    }
+
+    #[test]
+    fn a_full_size_keyboard_ripples_from_its_number_pad() {
+        let mut e = Engine::new(setup(vec![kind(EffectKind::Ripple)]), 1);
+        assert!(!e.key_press(1, 18, 0.0), "Num Lock is off a tenkeyless grid");
+        e.set_layout(&Layout::for_size(6, 22));
+        assert!(e.key_press(1, 18, 0.0));
+        let f = e.render(0.0);
+        assert!(lit(f[1][18]));
+        assert!(f[6..].iter().all(|row| row.iter().all(|&c| !lit(c))), "nothing below the grid");
+        assert!(f.iter().all(|row| row[22..].iter().all(|&c| !lit(c))), "nothing right of the grid");
+    }
+
+    #[test]
+    fn every_effect_draws_inside_a_one_row_keyboard_only() {
+        for k in EffectKind::ALL {
+            let mut e = Engine::new(setup(vec![kind(k)]), 1);
+            e.set_layout(&Layout::for_size(1, 10));
+            let fs = frames(&mut e, 0.0, 1.0);
+            for f in &fs {
+                assert!(f[1..].iter().all(|row| row.iter().all(|&c| !lit(c))), "{k:?} drew below row 0");
+                assert!(f[0][10..].iter().all(|&c| !lit(c)), "{k:?} drew past column 10");
+            }
+            if !matches!(k, EffectKind::Starlight | EffectKind::Reactive | EffectKind::Ripple | EffectKind::Breathing) {
+                assert!(fs.iter().any(|f| f[0][..10].iter().any(|&c| lit(c))), "{k:?} drew nothing");
+            }
+        }
+    }
+
+    #[test]
+    fn presses_outside_a_smaller_grid_light_nothing() {
+        let mut e = Engine::new(setup(vec![kind(EffectKind::Reactive)]), 1);
+        e.set_layout(&Layout::for_size(5, 15));
+        assert!(!e.key_press(5, 7, 0.0), "row 5 is past a five-row grid");
+        assert!(!e.key_press(2, 16, 0.0), "column 16 is past a fifteen-column grid");
+        assert!(e.key_press(2, 3, 0.0));
+        assert_eq!(e.layout(), &Layout::for_size(5, 15));
     }
 
     #[test]

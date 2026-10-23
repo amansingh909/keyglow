@@ -9,7 +9,8 @@ use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 
 pub const DEFAULT_INPUT_DIR: &str = "/dev/input/by-id";
-const LINK_PREFIX: &[u8] = b"usb-Razer_Razer_BlackWidow_V3_Tenkeyless-";
+/// udev names every Razer keyboard interface's key event link `usb-Razer...event-kbd`.
+const RAZER_PREFIX: &[u8] = b"usb-Razer";
 const LINK_SUFFIX: &[u8] = b"event-kbd";
 
 /// Size of `struct input_event` on x86_64: 16 bytes of time, u16 type, u16 code, i32 value.
@@ -17,20 +18,45 @@ pub const EVENT_SIZE: usize = 24;
 const EV_KEY: u16 = 1;
 const KEY_DOWN: i32 = 1;
 
-/// Whether a `/dev/input/by-id` name is one of this keyboard's key event links.
+/// Whether a `/dev/input/by-id` name is the key event link of a Razer keyboard.
 pub fn is_keyboard_link(name: &OsStr) -> bool {
     let name = name.as_bytes();
-    name.len() >= LINK_PREFIX.len() + LINK_SUFFIX.len() && name.starts_with(LINK_PREFIX) && name.ends_with(LINK_SUFFIX)
+    name.len() >= RAZER_PREFIX.len() + LINK_SUFFIX.len() && name.starts_with(RAZER_PREFIX) && name.ends_with(LINK_SUFFIX)
 }
 
-/// The keyboard's key event files, sorted.
-pub fn find(input_dir: &Path) -> Vec<PathBuf> {
+/// How udev's by-id link names for a keyboard start: `usb-`, its USB manufacturer, product
+/// and (when it has one) serial strings joined by `_`, then `-`. They are read from the USB
+/// device two folders above the lighting interface. None when they can't be read.
+pub fn link_prefix(lighting_dir: &Path) -> Option<String> {
+    let usb = fs::canonicalize(lighting_dir).ok()?.parent()?.parent()?.to_path_buf();
+    let read = |file: &str| fs::read_to_string(usb.join(file)).ok().map(|s| udev_clean(&s)).filter(|s| !s.is_empty());
+    let mut id = format!("{}_{}", read("manufacturer")?, read("product")?);
+    if let Some(serial) = read("serial") {
+        id = format!("{id}_{serial}");
+    }
+    Some(format!("usb-{id}-"))
+}
+
+/// A USB string as udev puts it into a by-id name: each run of whitespace becomes one `_`
+/// (none at the ends), and anything but ASCII letters, digits and `#+-.:=@_` becomes `_`.
+fn udev_clean(s: &str) -> String {
+    let joined = s.split_whitespace().collect::<Vec<_>>().join("_");
+    joined.chars().map(|c| if c.is_ascii_alphanumeric() || "#+-.:=@_".contains(c) { c } else { '_' }).collect()
+}
+
+/// The keyboard's key event files, sorted: the Razer keyboard links that start with `prefix`
+/// (see [`link_prefix`]). Without a prefix, or when none start with it, every Razer keyboard's.
+pub fn find(input_dir: &Path, prefix: Option<&str>) -> Vec<PathBuf> {
     let Ok(entries) = fs::read_dir(input_dir) else {
         return Vec::new();
     };
     let mut found: Vec<PathBuf> =
         entries.filter_map(|e| e.ok()).filter(|e| is_keyboard_link(&e.file_name())).map(|e| e.path()).collect();
     found.sort();
+    let own = |p: &PathBuf| prefix.is_some_and(|pre| p.file_name().is_some_and(|n| n.as_bytes().starts_with(pre.as_bytes())));
+    if found.iter().any(own) {
+        found.retain(own);
+    }
     found
 }
 
@@ -167,17 +193,43 @@ mod tests {
             "usb-Razer_Razer_BlackWidow_V3_Tenkeyless-if01-event-kbd",
             "usb-Razer_Razer_BlackWidow_V3_Tenkeyless-if02-event-mouse",
             "usb-Other_Keyboard-event-kbd",
+            "usb-Razer_Razer_DeathAdder_V2-if01-event-kbd",
         ] {
             fs::write(d.path().join(name), "").unwrap();
         }
-        assert_eq!(
-            find(d.path()),
-            vec![
-                d.path().join("usb-Razer_Razer_BlackWidow_V3_Tenkeyless-event-kbd"),
-                d.path().join("usb-Razer_Razer_BlackWidow_V3_Tenkeyless-if01-event-kbd"),
-            ]
-        );
-        assert!(find(&d.path().join("missing")).is_empty());
+        let tkl = vec![
+            d.path().join("usb-Razer_Razer_BlackWidow_V3_Tenkeyless-event-kbd"),
+            d.path().join("usb-Razer_Razer_BlackWidow_V3_Tenkeyless-if01-event-kbd"),
+        ];
+        assert_eq!(find(d.path(), Some("usb-Razer_Razer_BlackWidow_V3_Tenkeyless-")), tkl);
+        // Without the keyboard's own names, or before its links exist, any Razer keyboard's.
+        let mut any = tkl.clone();
+        any.push(d.path().join("usb-Razer_Razer_DeathAdder_V2-if01-event-kbd"));
+        assert_eq!(find(d.path(), None), any);
+        assert_eq!(find(d.path(), Some("usb-Razer_Razer_Huntsman_V2-")), any);
+        // A longer model name isn't mistaken for a shorter one.
+        assert_eq!(find(d.path(), Some("usb-Razer_Razer_BlackWidow_V3-")), any);
+        assert!(find(&d.path().join("missing"), None).is_empty());
+    }
+
+    #[test]
+    fn link_prefix_follows_udev_naming() {
+        let d = tempfile::tempdir().unwrap();
+        let usb = d.path().join("usb1").join("1-3");
+        let lighting = usb.join("1-3:1.2").join("0003:1532:024E.0005");
+        fs::create_dir_all(&lighting).unwrap();
+        fs::write(usb.join("manufacturer"), "Razer\n").unwrap();
+        fs::write(usb.join("product"), "Razer BlackWidow V3\n").unwrap();
+        // The driver folder holds a link to the interface, like /sys/bus/hid/drivers/razerkbd.
+        let drivers = d.path().join("razerkbd");
+        fs::create_dir(&drivers).unwrap();
+        std::os::unix::fs::symlink(&lighting, drivers.join("0003:1532:024E.0005")).unwrap();
+        assert_eq!(link_prefix(&drivers.join("0003:1532:024E.0005")).as_deref(), Some("usb-Razer_Razer_BlackWidow_V3-"));
+        fs::write(usb.join("serial"), "  PM2 21/4  \n").unwrap();
+        assert_eq!(link_prefix(&lighting).as_deref(), Some("usb-Razer_Razer_BlackWidow_V3_PM2_21_4-"));
+        fs::remove_file(usb.join("product")).unwrap();
+        assert_eq!(link_prefix(&lighting), None);
+        assert_eq!(link_prefix(&d.path().join("missing")), None);
     }
 
     #[test]

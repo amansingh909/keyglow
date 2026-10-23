@@ -1,8 +1,10 @@
 use crate::color::Rgb;
 use serde::{Deserialize, Serialize};
 
-pub const ROWS: usize = 6;
-pub const COLS: usize = 18;
+/// The largest light grid of any supported keyboard (see `keyboards`). Frames are this big, and
+/// each keyboard uses its own corner of them.
+pub const MAX_ROWS: usize = 9;
+pub const MAX_COLS: usize = 25;
 
 fn num<'de, D: serde::Deserializer<'de>>(d: D) -> Result<f64, D::Error> {
     f64::deserialize(d)

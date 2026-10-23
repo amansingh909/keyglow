@@ -1,4 +1,4 @@
-//! keyglowd: lights the Razer BlackWidow V3 Tenkeyless from the active Keyglow setup.
+//! keyglowd: lights a Razer keyboard from the active Keyglow setup.
 
 mod device;
 mod input;
