@@ -10,6 +10,10 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-44D62C?style=for-the-badge&labelColor=111111" alt="MIT license"></a>
 </p>
 
+<p align="center">
+  <a href="https://github.com/sponsors/amansingh909"><img src="https://img.shields.io/badge/sponsor-on%20GitHub-44D62C?style=for-the-badge&labelColor=111111&logo=githubsponsors&logoColor=EA4AAA" alt="Sponsor on GitHub"></a>
+</p>
+
 # Keyglow
 
 Layered keyboard lighting for the Razer BlackWidow V3 Tenkeyless on Linux. It works the way Razer Chroma Studio does on Windows: you stack effects, such as a colour wave, twinkling keys and a ripple from every key you press, and they all play at once.
