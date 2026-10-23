@@ -2,12 +2,13 @@
 //! next frame time, and draws only while something on the keyboard moves.
 //!
 //! Wake-up rules (see [`next_wait`]): with no keyboard, rescan every 2 s; while the hardware
-//! brightness reads 0, read it again every 2 s and draw nothing; while the engine animates (or
-//! a change is waiting to be shown), wake at the next frame time; while still, wake only to
-//! resend the last frame every 5 s. While the keyboard is there but its key event files aren't
-//! all open (or their folder isn't watched), look for them every 2 s as well. Events (key
-//! presses, settings writes, new key links, signals) wake it sooner. While drawing, the
-//! brightness is read at most every 2 s, just before a frame.
+//! brightness reads 0, read it again every 2 s and draw nothing; after a key press that lights
+//! something, draw at once instead of waiting for the next frame time, which can be most of a
+//! frame away; while the engine animates (or a change is waiting to be shown), wake at the next
+//! frame time; while still, wake only to resend the last frame every 5 s. While the keyboard is
+//! there but its key event files aren't all open (or their folder isn't watched), look for them
+//! every 2 s as well. Events (key presses, settings writes, new key links, signals) wake it
+//! sooner. While drawing, the brightness is read at most every 2 s, just before a frame.
 
 use crate::device::{self, Keyboard};
 use crate::input::{self, KeyFile, Read};
@@ -43,6 +44,7 @@ pub struct Options {
 /// How long to sleep. Zero only when a frame is due.
 pub fn next_wait(
     animating: bool,
+    pressed: bool,
     keyboard: bool,
     dimmed: bool,
     since_last_frame: Duration,
@@ -52,6 +54,8 @@ pub fn next_wait(
         RESCAN
     } else if dimmed {
         BRIGHTNESS_CHECK
+    } else if pressed {
+        Duration::ZERO
     } else if animating {
         frame_interval.saturating_sub(since_last_frame)
     } else {
@@ -102,6 +106,8 @@ struct Daemon<'a> {
     last_status: Option<Status>,
     /// Something changed that the keyboard doesn't show yet.
     dirty: bool,
+    /// A key press lit something the keyboard doesn't show yet. It is drawn at once.
+    pressed: bool,
     /// The hardware brightness read 0 (screen saver).
     dimmed: bool,
     last_frame: Option<Instant>,
@@ -146,6 +152,7 @@ impl<'a> Daemon<'a> {
             status_changed: true,
             last_status: None,
             dirty: true,
+            pressed: false,
             dimmed: false,
             last_frame: None,
             next_rescan: now,
@@ -225,7 +232,7 @@ impl<'a> Daemon<'a> {
     fn wait_at(&self, now: Instant) -> Duration {
         let since = self.last_frame.map_or(Duration::MAX, |last| now.saturating_duration_since(last));
         let moving = self.dirty || self.engine.animating(self.secs(now));
-        next_wait(moving, self.keyboard.is_some(), self.dimmed, since, self.frame_interval())
+        next_wait(moving, self.pressed, self.keyboard.is_some(), self.dimmed, since, self.frame_interval())
     }
 
     fn secs(&self, now: Instant) -> f64 {
@@ -248,10 +255,14 @@ impl<'a> Daemon<'a> {
                 // A frame drawn while moving isn't the settled look: when the movement stops,
                 // one more frame shows how it ends (say, a faded key back to black).
                 self.dirty = self.engine.animating(t);
+                self.pressed = false;
                 // Keep animation frames on a steady beat instead of drifting by the wake-up delay.
+                // A frame drawn early for a key press starts the beat again from there.
                 let interval = self.frame_interval();
                 self.last_frame = Some(match self.last_frame {
-                    Some(last) if now.saturating_duration_since(last) < interval * 2 => last + interval,
+                    Some(last) if (interval..interval * 2).contains(&now.saturating_duration_since(last)) => {
+                        last + interval
+                    }
                     _ => now,
                 });
             }
@@ -389,7 +400,7 @@ impl<'a> Daemon<'a> {
             if accept {
                 for code in codes {
                     if let Some((row, col)) = grid_of_keycode(code) {
-                        self.engine.key_press(row, col, t);
+                        self.pressed |= self.engine.key_press(row, col, t);
                     }
                 }
             }
@@ -446,21 +457,27 @@ mod tests {
     fn next_wait_matches_the_rules() {
         let frame = MS(33);
         // No keyboard: look again in 2 s, whatever else is going on.
-        assert_eq!(next_wait(true, false, false, MS(0), frame), RESCAN);
-        assert_eq!(next_wait(false, false, true, MS(9000), frame), RESCAN);
+        assert_eq!(next_wait(true, false, false, false, MS(0), frame), RESCAN);
+        assert_eq!(next_wait(false, false, false, true, MS(9000), frame), RESCAN);
         // Dimmed: check the brightness again in 2 s.
-        assert_eq!(next_wait(true, true, true, MS(0), frame), BRIGHTNESS_CHECK);
-        assert_eq!(next_wait(false, true, true, MS(9000), frame), BRIGHTNESS_CHECK);
+        assert_eq!(next_wait(true, false, true, true, MS(0), frame), BRIGHTNESS_CHECK);
+        assert_eq!(next_wait(false, false, true, true, MS(9000), frame), BRIGHTNESS_CHECK);
         // Animating: the time left to the next frame, zero once it is due.
-        assert_eq!(next_wait(true, true, false, MS(10), frame), MS(23));
-        assert_eq!(next_wait(true, true, false, MS(33), frame), Duration::ZERO);
-        assert_eq!(next_wait(true, true, false, MS(500), frame), Duration::ZERO);
-        assert_eq!(next_wait(true, true, false, Duration::MAX, frame), Duration::ZERO);
+        assert_eq!(next_wait(true, false, true, false, MS(10), frame), MS(23));
+        assert_eq!(next_wait(true, false, true, false, MS(33), frame), Duration::ZERO);
+        assert_eq!(next_wait(true, false, true, false, MS(500), frame), Duration::ZERO);
+        assert_eq!(next_wait(true, false, true, false, Duration::MAX, frame), Duration::ZERO);
+        // A key press that lit something: draw now, even mid-frame or when still.
+        assert_eq!(next_wait(true, true, true, false, MS(1), frame), Duration::ZERO);
+        assert_eq!(next_wait(false, true, true, false, MS(1), frame), Duration::ZERO);
+        // ...but not while dimmed or without a keyboard.
+        assert_eq!(next_wait(true, true, true, true, MS(1), frame), BRIGHTNESS_CHECK);
+        assert_eq!(next_wait(true, true, false, false, MS(1), frame), RESCAN);
         // Still: the time left to the 5 s resend.
-        assert_eq!(next_wait(false, true, false, MS(1000), frame), MS(4000));
-        assert_eq!(next_wait(false, true, false, MS(0), frame), RESEND);
-        assert_eq!(next_wait(false, true, false, MS(5000), frame), Duration::ZERO);
-        assert_eq!(next_wait(false, true, false, Duration::MAX, frame), Duration::ZERO);
+        assert_eq!(next_wait(false, false, true, false, MS(1000), frame), MS(4000));
+        assert_eq!(next_wait(false, false, true, false, MS(0), frame), RESEND);
+        assert_eq!(next_wait(false, false, true, false, MS(5000), frame), Duration::ZERO);
+        assert_eq!(next_wait(false, false, true, false, Duration::MAX, frame), Duration::ZERO);
     }
 
     #[test]

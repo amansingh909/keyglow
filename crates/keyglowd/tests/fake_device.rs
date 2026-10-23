@@ -467,6 +467,41 @@ fn opens_key_links_again_after_their_folder_is_recreated() {
 }
 
 #[test]
+fn a_key_press_is_drawn_at_once_instead_of_on_the_next_beat() {
+    let daemon = Daemon::start(None, |sysfs| {
+        fake_device(sysfs, "0003:1532:0A24.0016", "255\n");
+    });
+    let link = daemon.p().input.join(KEY_LINK);
+    make_key_link(&link);
+    fs::create_dir_all(&daemon.p().config).unwrap();
+    // 10 frames a second, so the next beat is 100 ms away. A fast Spectrum changes colour on
+    // every frame and never shows white; the Reactive layer on top lights a pressed key white.
+    daemon.save(
+        r#"{"name":"keys","fps":10,"layers":[{"effect":{"type":"spectrum","speed":100}},{"effect":{"type":"reactive"}}]}"#,
+    );
+    let mut pipe = key_writer(&link, Duration::from_secs(3)).expect("keyglowd never opened the key link");
+    let dev = daemon.device("0003:1532:0A24.0016");
+    let frame = || read(&dev.join(FRAME_FILE));
+    // The Spectrum shows: every key the same colour (the default setup at start-up isn't).
+    let uniform = |f: &[u8]| f.len() == 342 && (0..ROWS * COLS).all(|i| f[i / COLS * 57 + 3 + i % COLS * 3..][..3] == f[3..6]);
+    assert!(wait_until(SECOND, || uniform(&frame())), "the Spectrum setup never showed");
+
+    // Press just after a frame lands, when the next beat is a whole interval away.
+    let before = frame();
+    let deadline = Instant::now() + SECOND;
+    while frame() == before {
+        assert!(Instant::now() < deadline, "the frames stopped");
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    let pressed = Instant::now();
+    press_space(&mut pipe);
+    let white = |f: &[u8]| f.len() == 342 && f[SPACE..SPACE + 3].iter().all(|&b| b >= 200);
+    assert!(wait_until(SECOND, || white(&frame())), "the press never reached the frame");
+    let took = pressed.elapsed();
+    assert!(took < Duration::from_millis(60), "the press waited {took:?} for the next beat");
+}
+
+#[test]
 fn waits_for_a_keyboard_that_is_not_there_yet() {
     let daemon = Daemon::start(Some("#102030"), |_| {});
     assert!(wait_until(SECOND, || daemon.status().is_some_and(|s| !s.keyboard)));

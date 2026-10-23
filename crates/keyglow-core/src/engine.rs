@@ -48,16 +48,19 @@ impl Engine {
         self.setup = setup;
     }
 
-    /// A key at this grid cell went down at `t` (seconds on a monotonic clock).
-    pub fn key_press(&mut self, row: usize, col: usize, t: f64) {
+    /// A key at this grid cell went down at `t` (seconds on a monotonic clock). True when a
+    /// layer lights something for it, so the caller can draw it now rather than on the next beat.
+    pub fn key_press(&mut self, row: usize, col: usize, t: f64) -> bool {
         if row >= ROWS || col >= COLS {
-            return;
+            return false;
         }
+        let mut lit = false;
         for (layer, state) in self.setup.layers.iter().zip(&mut self.states) {
             if shows(layer) {
-                state.press(&layer.effect, row, col, t, &mut self.rng);
+                lit |= state.press(&layer.effect, row, col, t, &mut self.rng);
             }
         }
+        lit && self.setup.brightness > 0
     }
 
     /// The frame at `t`, with the setup's brightness applied. Waves, breaths and the like move
@@ -157,6 +160,22 @@ mod tests {
         e.key_press(2, 3, 0.0);
         assert!(!e.animating(0.1));
         assert!(Engine::new(Setup::owner_default(), 1).animating(0.0));
+    }
+
+    #[test]
+    fn key_press_says_whether_it_lights_anything() {
+        let mut e = Engine::new(setup(vec![kind(EffectKind::Wave), kind(EffectKind::Starlight)]), 1);
+        assert!(!e.key_press(2, 3, 0.0), "no layer takes presses");
+        let mut off = kind(EffectKind::Ripple);
+        off.enabled = false;
+        assert!(!Engine::new(setup(vec![kind(EffectKind::Wave), off]), 1).key_press(2, 3, 0.0), "the ripple is off");
+        let mut dark = setup(vec![kind(EffectKind::Ripple)]);
+        dark.brightness = 0;
+        assert!(!Engine::new(dark, 1).key_press(2, 3, 0.0), "the keyboard is dark");
+        let mut e = Engine::new(setup(vec![kind(EffectKind::Wave), kind(EffectKind::Ripple)]), 1);
+        assert!(e.key_press(2, 3, 0.0));
+        assert!(Engine::new(setup(vec![kind(EffectKind::Reactive)]), 1).key_press(2, 3, 0.0));
+        assert!(!e.key_press(ROWS, 0, 0.0), "off the grid");
     }
 
     #[test]

@@ -189,8 +189,8 @@ impl LayerState {
         self.live.len()
     }
 
-    /// A key at (row, col) went down at `t`. Only Reactive and Ripple care.
-    pub(crate) fn press(&mut self, effect: &Effect, row: usize, col: usize, t: f64, rng: &mut Rng) {
+    /// A key at (row, col) went down at `t`. Only Reactive and Ripple care, and say so.
+    pub(crate) fn press(&mut self, effect: &Effect, row: usize, col: usize, t: f64, rng: &mut Rng) -> bool {
         let palette = match effect {
             Effect::Reactive { palette, .. } => {
                 // Pressing a lit key again restarts it rather than stacking a second light.
@@ -198,12 +198,13 @@ impl LayerState {
                 palette
             }
             Effect::Ripple { palette, .. } => palette,
-            _ => return,
+            _ => return false,
         };
         if self.live.len() >= MAX_LIVE {
             self.live.pop_front();
         }
         self.live.push_back(Spark { row, col, t0: t, color: pick(palette, rng) });
+        true
     }
 
     /// Whether this layer will look different at some time after `t`.
