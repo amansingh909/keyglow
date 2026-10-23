@@ -1064,7 +1064,7 @@ dependencies = [
 
 [[package]]
 name = "keyglow"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "eframe",
  "keyglow-core",
@@ -1074,7 +1074,7 @@ dependencies = [
 
 [[package]]
 name = "keyglow-core"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "quick-xml 0.42.0",
  "serde",
@@ -1085,7 +1085,7 @@ dependencies = [
 
 [[package]]
 name = "keyglowd"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "keyglow-core",
  "nix",

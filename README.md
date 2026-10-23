@@ -6,7 +6,7 @@
   <a href="../../releases/latest"><img src="https://img.shields.io/github/v/release/amansingh909/keyglow?style=for-the-badge&labelColor=111111&color=44D62C&label=release" alt="Latest release"></a>
   <img src="https://img.shields.io/badge/platform-Linux-44D62C?style=for-the-badge&labelColor=111111&logo=linux&logoColor=white" alt="Linux">
   <img src="https://img.shields.io/badge/built%20with-Rust-44D62C?style=for-the-badge&labelColor=111111&logo=rust&logoColor=white" alt="Built with Rust">
-  <img src="https://img.shields.io/badge/keyboard-BlackWidow%20V3%20TKL-44D62C?style=for-the-badge&labelColor=111111" alt="BlackWidow V3 TKL">
+  <a href="#supported-keyboards"><img src="https://img.shields.io/badge/supports-92%20Razer%20models-44D62C?style=for-the-badge&labelColor=111111&logo=razer&logoColor=44D62C" alt="Supports 92 Razer models"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-44D62C?style=for-the-badge&labelColor=111111" alt="MIT license"></a>
 </p>
 
@@ -16,14 +16,14 @@
 
 # Keyglow
 
-Layered keyboard lighting for the Razer BlackWidow V3 Tenkeyless on Linux. It works the way Razer Chroma Studio does on Windows: you stack effects, such as a colour wave, twinkling keys and a ripple from every key you press, and they all play at once.
+Layered keyboard lighting for Razer keyboards on Linux. It works the way Razer Chroma Studio does on Windows: you stack effects, such as a colour wave, twinkling keys and a ripple from every key you press, and they all play at once.
 
 Two programs make it up:
 
 - `keyglowd` is a tiny background program that draws the lighting. It starts at login and needs no window.
 - `keyglow` is the settings window. Open it when you want to change something, then close it. The lighting keeps running.
 
-Only this keyboard model is supported and tested. It was built and tested on Pop!_OS 24.04 with COSMIC on Wayland.
+It runs on every Razer keyboard, laptop and keypad that the OpenRazer driver can light key by key, 92 models in all. It was built and tested on a BlackWidow V3 Tenkeyless with Pop!_OS 24.04 and COSMIC on Wayland. The other models should work but haven't been tested yet, so if you try one, please [open an issue](../../issues) and say how it went.
 
 ## Effects
 
@@ -32,6 +32,118 @@ Only this keyboard model is supported and tested. It was built and tested on Pop
 </p>
 
 Every keyboard above is drawn from real Keyglow frames, made by the same code that lights the keyboard. Reactive and Ripple are answering simulated typing.
+
+## Supported keyboards
+
+Keyglow finds the keyboard by its USB ID and sizes every frame to that model's light grid, using the same grid sizes as OpenRazer. Only the BlackWidow V3 Tenkeyless has been tested so far. Everything else on the list should work but hasn't been tried.
+
+Ripple and Reactive need to know where each key sits. Keyglow uses Razer's standard key grid for that, the same one OpenRazer's own ripple uses, so full-size and tenkeyless keyboards should be spot on. On compact keyboards, laptops and keypads some keys may light the wrong spot or nothing at all, while the effects that don't follow keys work the same everywhere. Keyboards lit in zones instead of key by key, such as the Ornata V3, show the effects across their zones.
+
+<details>
+<summary>All 92 models</summary>
+
+**Keyboards** (53)
+
+- BlackWidow 2019
+- BlackWidow Chroma
+- BlackWidow Chroma (Overwatch)
+- BlackWidow Chroma Tournament Edition
+- BlackWidow Chroma V2
+- BlackWidow Elite
+- BlackWidow Essential
+- BlackWidow Ultimate 2016
+- BlackWidow V3
+- BlackWidow V3 Mini HyperSpeed (Wired)
+- BlackWidow V3 Mini HyperSpeed (Wireless)
+- BlackWidow V3 Pro (Wired)
+- BlackWidow V3 Pro (Wireless)
+- BlackWidow V3 Tenkeyless (tested)
+- BlackWidow V4
+- BlackWidow V4 75%
+- BlackWidow V4 Mini Hyperspeed (Wired)
+- BlackWidow V4 Mini Hyperspeed (Wireless)
+- BlackWidow V4 Pro
+- BlackWidow V4 Tenkeyless HyperSpeed (Wired)
+- BlackWidow V4 Tenkeyless HyperSpeed (Wireless)
+- BlackWidow V4 X
+- BlackWidow X Chroma
+- BlackWidow X Chroma Tournament Edition
+- BlackWidow X Ultimate
+- Cynosa Chroma
+- Cynosa Chroma Pro
+- Cynosa V2
+- DeathStalker Chroma
+- DeathStalker V2
+- DeathStalker V2 Pro (Wired)
+- DeathStalker V2 Pro (Wireless)
+- DeathStalker V2 Pro TKL (Wired)
+- DeathStalker V2 Pro TKL (Wireless)
+- Huntsman
+- Huntsman Elite
+- Huntsman Mini
+- Huntsman Mini (JP)
+- Huntsman Mini Analog
+- Huntsman Tournament Edition
+- Huntsman V2
+- Huntsman V2 Analog
+- Huntsman V2 Tenkeyless
+- Huntsman V3 Pro
+- Huntsman V3 Pro 8KHz
+- Huntsman V3 Pro Mini
+- Huntsman V3 Pro TKL
+- Ornata
+- Ornata Chroma
+- Ornata V2
+- Ornata V3
+- Ornata V3 Tenkeyless
+- Ornata V3 X
+
+**Laptops** (36)
+
+- Blade (Late 2016)
+- Blade 14 (2021)
+- Blade 14 (2022)
+- Blade 14 (2023)
+- Blade 14 (2024)
+- Blade 14 (2025)
+- Blade 15 (2018)
+- Blade 15 (2018) Mercury
+- Blade 15 (2019) Advanced
+- Blade 15 (2023)
+- Blade 15 (Mid 2019) Mercury White
+- Blade 15 Advanced (2020)
+- Blade 15 Advanced (Early 2021)
+- Blade 15 Advanced (Early 2022)
+- Blade 15 Advanced (Mid 2021)
+- Blade 15 Studio Edition (2019)
+- Blade 16 (2023)
+- Blade 16 (2025)
+- Blade 17 (2022)
+- Blade 17 Pro (Early 2021)
+- Blade 17 Pro (Mid 2021)
+- Blade 18 (2023)
+- Blade 18 (2024)
+- Blade 18 (2025)
+- Blade Advanced (Late 2019)
+- Blade Pro (2017)
+- Blade Pro (2019)
+- Blade Pro (Early 2020)
+- Blade Pro (Late 2016)
+- Blade Pro (Late 2019)
+- Blade Pro FullHD (2017)
+- Blade Stealth
+- Blade Stealth (Late 2016)
+- Blade Stealth (Late 2017)
+- Blade Stealth (Mid 2017)
+- Blade Stealth (QHD)
+
+**Keypads** (3)
+
+- Orbweaver Chroma
+- Tartarus Pro
+- Tartarus V2
+
+</details>
 
 ## What you need
 
@@ -46,10 +158,10 @@ Every keyboard above is drawn from real Keyglow frames, made by the same code th
 
 ### From a release
 
-Download `keyglow-v0.1.1-x86_64-linux.tar.gz` from the [releases page](../../releases), then:
+Download `keyglow-v0.2.0-x86_64-linux.tar.gz` from the [releases page](../../releases), then:
 
-    tar xf keyglow-v0.1.1-x86_64-linux.tar.gz
-    cd keyglow-v0.1.1-x86_64-linux
+    tar xf keyglow-v0.2.0-x86_64-linux.tar.gz
+    cd keyglow-v0.2.0-x86_64-linux
     ./install.sh --enable
 
 The programs in the download are already built, so you don't need Rust. They were built on Pop!_OS 24.04 and need glibc 2.39 or newer (Ubuntu 24.04 and later have it). On an older system, build from source instead.
@@ -120,10 +232,10 @@ For testing, `keyglowd` accepts `--config-dir`, `--sysfs-dir`, `--input-dir` and
 
 ## Troubleshooting
 
-- The window says the keyboard is not found: check the OpenRazer driver is loaded and that your user is in `plugdev` (`id`). Log out and in again after joining the group.
+- The window says the keyboard is not found: check that your model is in the [list](#supported-keyboards), that the OpenRazer driver is loaded and that your user is in `plugdev` (`id`). Log out and in again after joining the group.
 - The lighting flickers: something else is lighting the keyboard. Stop OpenRGB or other lighting tools for it.
 - The keyboard goes dark when the screen locks: that is OpenRazer dimming it for the screen saver. It comes back on unlock.
-- A ripple starts from the wrong key: key positions come from OpenRazer's key table, and the fix is one line in `crates/keyglow-core/src/keymap.rs`.
+- A ripple starts from the wrong key: key positions come from Razer's standard key grid. On a full-size or tenkeyless keyboard that's a bug, and the fix is one line in `crates/keyglow-core/src/keymap.rs`. Compact keyboards and laptops can differ from the grid, so please open an issue with your model.
 - Anything else: `journalctl --user -u keyglowd`.
 
 ## Privacy
