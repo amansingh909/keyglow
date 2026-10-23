@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Build and install Keyglow for the current user. No root needed.
-#   ./install.sh              build and install
+# Install Keyglow for the current user, building it first unless it came prebuilt. No root needed.
+#   ./install.sh              install (or update an existing install)
 #   ./install.sh --enable     also start the lighting now and at every login
 #   ./install.sh --uninstall  stop the service and remove the installed files
 set -euo pipefail
@@ -43,18 +43,25 @@ if [ "$mode" = "uninstall" ]; then
     exit 0
 fi
 
-if [ -x "$HOME/.cargo/bin/cargo" ]; then
-    cargo="$HOME/.cargo/bin/cargo"
-elif command -v cargo >/dev/null 2>&1; then
-    cargo="$(command -v cargo)"
+if [ -x "$here/bin/keyglowd" ] && [ -x "$here/bin/keyglow" ]; then
+    # A release download: the programs come already built.
+    built="$here/bin"
+    echo "Using the prebuilt programs in $built"
 else
-    echo "Cannot find cargo. Install Rust from https://rustup.rs first." >&2
-    exit 1
-fi
+    if [ -x "$HOME/.cargo/bin/cargo" ]; then
+        cargo="$HOME/.cargo/bin/cargo"
+    elif command -v cargo >/dev/null 2>&1; then
+        cargo="$(command -v cargo)"
+    else
+        echo "Cannot find cargo. Install Rust from https://rustup.rs first." >&2
+        exit 1
+    fi
 
-echo "Building Keyglow (this takes a few minutes the first time)."
-# A few jobs at low priority: building on every core has cut the power on this laptop on battery.
-(cd "$here" && CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-4}" nice -n 10 "$cargo" build --release --workspace)
+    echo "Building Keyglow (this takes a few minutes the first time)."
+    # A few jobs at low priority: building on every core has cut the power on a laptop on battery.
+    (cd "$here" && CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-4}" nice -n 10 "$cargo" build --release --workspace)
+    built="$here/target/release"
+fi
 
 mkdir -p "$bin_dir" "$unit_dir" "$app_dir"
 
@@ -65,8 +72,8 @@ if systemctl --user is-active --quiet keyglowd.service 2>/dev/null; then
     restart=1
 fi
 
-install -m 755 "$here/target/release/keyglowd" "$bin_dir/keyglowd"
-install -m 755 "$here/target/release/keyglow" "$bin_dir/keyglow"
+install -m 755 "$built/keyglowd" "$bin_dir/keyglowd"
+install -m 755 "$built/keyglow" "$bin_dir/keyglow"
 echo "Copied keyglowd and keyglow to $bin_dir"
 
 install -m 644 "$here/packaging/keyglowd.service" "$unit"
