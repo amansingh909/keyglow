@@ -9,8 +9,19 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 bin_dir="$HOME/.local/bin"
 unit_dir="$HOME/.config/systemd/user"
 app_dir="$HOME/.local/share/applications"
+icon_theme="$HOME/.local/share/icons/hicolor"
+icon_dir="$icon_theme/scalable/apps"
 unit="$unit_dir/keyglowd.service"
 desktop="$app_dir/keyglow.desktop"
+icon="$icon_dir/keyglow.svg"
+
+# GTK trusts an existing icon cache over the folder, so a new icon stays hidden until the cache
+# is rebuilt, or is at least older than the folder.
+refresh_icon_cache() {
+    if [ -f "$icon_theme/icon-theme.cache" ]; then
+        gtk-update-icon-cache -q -f -t "$icon_theme" 2>/dev/null || touch "$icon_theme"
+    fi
+}
 
 mode="install"
 enable=0
@@ -32,12 +43,13 @@ done
 if [ "$mode" = "uninstall" ]; then
     echo "Stopping and disabling the keyglowd service."
     systemctl --user disable --now keyglowd.service 2>/dev/null || true
-    for f in "$bin_dir/keyglowd" "$bin_dir/keyglow" "$unit" "$desktop"; do
+    for f in "$bin_dir/keyglowd" "$bin_dir/keyglow" "$unit" "$desktop" "$icon"; do
         if [ -e "$f" ]; then
             rm -f "$f"
             echo "Removed $f"
         fi
     done
+    refresh_icon_cache
     systemctl --user daemon-reload || true
     echo "Done. Your settings in $HOME/.config/keyglow were left alone."
     exit 0
@@ -63,7 +75,7 @@ else
     built="$here/target/release"
 fi
 
-mkdir -p "$bin_dir" "$unit_dir" "$app_dir"
+mkdir -p "$bin_dir" "$unit_dir" "$app_dir" "$icon_dir"
 
 # Stop a running copy first so the binary can be replaced.
 restart=0
@@ -78,6 +90,10 @@ echo "Copied keyglowd and keyglow to $bin_dir"
 
 install -m 644 "$here/packaging/keyglowd.service" "$unit"
 echo "Installed the login service at $unit"
+
+install -m 644 "$here/packaging/keyglow.svg" "$icon"
+refresh_icon_cache
+echo "Installed the app icon at $icon"
 
 sed "s|@KEYGLOW_BIN@|$bin_dir/keyglow|" "$here/packaging/keyglow.desktop" > "$desktop"
 chmod 644 "$desktop"

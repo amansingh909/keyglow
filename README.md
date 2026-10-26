@@ -174,7 +174,7 @@ From the project folder:
 
 This first builds a release version at low priority with at most 4 build jobs (set `CARGO_BUILD_JOBS` to change that).
 
-Either way, `install.sh` copies `keyglowd` and `keyglow` to `~/.local/bin`, installs a login service and a launcher entry, and starts the lighting. Leave out `--enable` to install without starting anything. Running it again later updates an existing install.
+Either way, `install.sh` copies `keyglowd` and `keyglow` to `~/.local/bin`, installs a login service and a launcher entry with its icon, and starts the lighting. Leave out `--enable` to install without starting anything. Running it again later updates an existing install.
 
 ## Using the window
 
@@ -226,7 +226,7 @@ It also asks the kernel for a short time slice, so it gets a CPU soon after it w
 - `~/.config/keyglow/active.json`: the setup on the keyboard now. The window writes it and `keyglowd` watches it.
 - `~/.config/keyglow/setups/<name>.json`: your saved setups. They are plain JSON.
 - `$XDG_RUNTIME_DIR/keyglow/status.json`: a small status file `keyglowd` writes so the window can show its state.
-- `~/.local/bin/keyglowd`, `~/.local/bin/keyglow`, `~/.config/systemd/user/keyglowd.service`, `~/.local/share/applications/keyglow.desktop`: what the installer puts down.
+- `~/.local/bin/keyglowd`, `~/.local/bin/keyglow`, `~/.config/systemd/user/keyglowd.service`, `~/.local/share/applications/keyglow.desktop`, `~/.local/share/icons/hicolor/scalable/apps/keyglow.svg`: what the installer puts down.
 
 For testing, `keyglowd` accepts `--config-dir`, `--sysfs-dir`, `--input-dir` and `--status-file`. The defaults are the real paths.
 

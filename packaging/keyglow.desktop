@@ -2,6 +2,8 @@
 Type=Application
 Name=Keyglow
 Comment=Keyboard lighting
+Icon=keyglow
 Exec=@KEYGLOW_BIN@
 Terminal=false
+StartupWMClass=keyglow
 Categories=Utility;Settings;
