@@ -1,5 +1,6 @@
 //! Runs the built keyglowd against fake device folders made of regular files in a temp dir.
-//! Nothing here touches /sys, /dev/input, the real settings folder or XDG_RUNTIME_DIR.
+//! Nothing here touches /sys, /dev/input, the real settings folder, XDG_RUNTIME_DIR or the
+//! session bus: without a bus, frames go to the folders.
 
 use keyglow_core::color::Rgb;
 use keyglow_core::frame::encode;
@@ -55,6 +56,8 @@ impl Daemon {
             .arg(&d.input)
             .arg("--status-file")
             .arg(&d.status)
+            .arg("--bus-address")
+            .arg("none")
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
             .spawn()

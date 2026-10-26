@@ -1,5 +1,7 @@
 [Unit]
 Description=Keyglow keyboard lighting
+# Start once the OpenRazer daemon is on the bus, when it is installed. Keyglow runs without it.
+After=openrazer-daemon.service
 
 [Service]
 Type=simple

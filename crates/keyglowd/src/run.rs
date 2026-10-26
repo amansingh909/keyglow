@@ -7,11 +7,15 @@
 //! frame away; while the engine animates (or a change is waiting to be shown), wake at the next
 //! frame time; while still, wake only to resend the last frame every 5 s. While the keyboard is
 //! there but its key event files aren't all open (or their folder isn't watched), look for them
-//! every 2 s as well. Events (key presses, settings writes, new key links, signals) wake it
-//! sooner. While drawing, the brightness is read at most every 2 s, just before a frame.
+//! every 2 s as well, and the same while its frames go to the driver's files, to move over to
+//! the OpenRazer daemon once it runs. Events (key presses, settings writes, new key links,
+//! signals) wake it sooner. While drawing, the brightness is read at most every 2 s, just
+//! before a frame.
 
+use crate::bus::{self, Bus};
 use crate::device::{self, Keyboard};
 use crate::input::{self, KeyFile, Read};
+use crate::openrazer;
 use crate::slice;
 use crate::watch::Watcher;
 use keyglow_core::engine::Engine;
@@ -34,12 +38,17 @@ pub const RESCAN: Duration = Duration::from_secs(2);
 pub const BRIGHTNESS_CHECK: Duration = Duration::from_secs(2);
 /// How often to send the last frame again while nothing moves.
 pub const RESEND: Duration = Duration::from_secs(5);
+/// The longest wait before asking the OpenRazer daemon again after it failed. Each failure in
+/// a row doubles the wait, starting from `RESCAN`.
+pub const DAEMON_BACKOFF_MAX: Duration = Duration::from_secs(60);
 
 pub struct Options {
     pub config_dir: PathBuf,
     pub sysfs_dir: PathBuf,
     pub input_dir: PathBuf,
     pub status_file: PathBuf,
+    /// The session bus, to reach the OpenRazer daemon. None: the driver's files only.
+    pub bus_address: Option<String>,
 }
 
 /// How long to sleep. Zero only when a frame is due.
@@ -109,8 +118,23 @@ struct Daemon<'a> {
     settings_error: Option<String>,
     /// Why a keyboard that was found isn't being drawn on, for the status file.
     keyboard_error: Option<String>,
-    /// The folder whose first write failed. Finding it again and failing again isn't logged.
-    failing: Option<PathBuf>,
+    /// Where the keyboard was whose first write failed (see [`Keyboard::place`]). Finding it
+    /// there again and failing again isn't logged.
+    failing: Option<String>,
+    /// Where the keyboard was last logged as found, so finding it there again isn't news.
+    announced: Option<String>,
+    /// The keyboard in use was taken without logging it (see [`Daemon::take`]). Its first
+    /// frame logs it.
+    unannounced: bool,
+    /// A bus connection kept while frames go to the driver's files, to look for the daemon.
+    bus: Option<Bus>,
+    /// When the OpenRazer daemon may be asked next, and how long to wait if it fails again.
+    next_daemon_check: Instant,
+    daemon_backoff: Duration,
+    /// Why the daemon isn't used although it may be running, for the log and the status file.
+    daemon_error: Option<String>,
+    /// The daemon's effect sync is on, which changes the other Razer devices with every frame.
+    daemon_syncs: bool,
     /// Something in the status may have changed; it is written at the end of the step.
     status_changed: bool,
     last_status: Option<Status>,
@@ -160,6 +184,13 @@ impl<'a> Daemon<'a> {
             settings_error,
             keyboard_error: None,
             failing: None,
+            announced: None,
+            unannounced: false,
+            bus: None,
+            next_daemon_check: now,
+            daemon_backoff: RESCAN,
+            daemon_error: None,
+            daemon_syncs: false,
             status_changed: true,
             last_status: None,
             dirty: true,
@@ -209,6 +240,9 @@ impl<'a> Daemon<'a> {
         if self.keyboard.is_some() && !self.keys_complete && now >= self.next_key_scan {
             self.scan_keys(now);
         }
+        if self.watching_for_daemon() && now >= self.next_daemon_check {
+            self.check_daemon(now);
+        }
         if self.keyboard.is_some() && self.dimmed && now >= self.next_brightness {
             self.check_brightness(now);
         }
@@ -233,11 +267,21 @@ impl<'a> Daemon<'a> {
             (true, true) => wait.min(self.next_brightness.saturating_duration_since(now)),
             (true, false) => wait,
         };
-        if self.keyboard.is_some() && !self.keys_complete {
+        let wait = if self.keyboard.is_some() && !self.keys_complete {
             wait.min(self.next_key_scan.saturating_duration_since(now))
         } else {
             wait
+        };
+        if self.watching_for_daemon() {
+            wait.min(self.next_daemon_check.saturating_duration_since(now))
+        } else {
+            wait
         }
+    }
+
+    /// Frames go to the driver's files, and the daemon could take them over if it starts.
+    fn watching_for_daemon(&self) -> bool {
+        self.opts.bus_address.is_some() && self.keyboard.as_ref().is_some_and(|k| !k.uses_daemon())
     }
 
     fn wait_at(&self, now: Instant) -> Duration {
@@ -261,8 +305,15 @@ impl<'a> Daemon<'a> {
         let Some(keyboard) = self.keyboard.as_mut() else { return };
         match keyboard.show(&bytes) {
             Ok(()) => {
-                if let Some(dir) = self.failing.take() {
-                    eprintln!("keyglowd: keyboard found at {} ({})", dir.display(), keyboard.model().name);
+                self.failing = None;
+                if self.unannounced {
+                    self.unannounced = false;
+                    let place = keyboard.place();
+                    eprintln!("keyglowd: keyboard found {place} ({})", keyboard.model().name);
+                    self.announced = Some(place);
+                }
+                if keyboard.uses_daemon() && (self.daemon_error.is_some() || self.daemon_backoff != RESCAN) {
+                    self.daemon_ok();
                 }
                 // A frame drawn while moving isn't the settled look: when the movement stops,
                 // one more frame shows how it ends (say, a faded key back to black).
@@ -285,6 +336,13 @@ impl<'a> Daemon<'a> {
     fn check_brightness(&mut self, now: Instant) {
         self.next_brightness = now + BRIGHTNESS_CHECK;
         let Some(keyboard) = self.keyboard.as_mut() else { return };
+        // Through the daemon no write fails when the keyboard is replugged, so follow its
+        // folder here when the old one is gone.
+        if keyboard.uses_daemon() && !keyboard.dir().is_some_and(|d| d.exists()) {
+            let dir = device::folder_of(&self.opts.sysfs_dir, keyboard.model().pid);
+            self.key_prefix = dir.as_deref().and_then(input::link_prefix).or(self.key_prefix.take());
+            keyboard.set_dir(dir);
+        }
         // An unreadable brightness counts as lit: a gone keyboard shows up on the next write.
         let off = matches!(keyboard.brightness(), Ok(0));
         if self.dimmed && !off {
@@ -293,44 +351,146 @@ impl<'a> Daemon<'a> {
         self.dimmed = off;
     }
 
-    /// Looks for the keyboard and opens it, with its key event files.
+    /// Looks for the keyboard and opens it, with its key event files: through the OpenRazer
+    /// daemon when it runs, else through the driver's files.
     fn rescan(&mut self, now: Instant) {
         self.next_rescan = now + RESCAN;
         self.status_changed = true;
+        if let Some(keyboard) = self.daemon_keyboard(now) {
+            self.take(keyboard, now);
+            return;
+        }
         let Some((dir, model)) = device::find(&self.opts.sysfs_dir) else {
             self.keyboard_error = None;
             self.failing = None;
             return;
         };
         match Keyboard::open(&dir, model) {
-            Ok(keyboard) => {
-                if self.failing.as_ref() != Some(&dir) {
-                    eprintln!("keyglowd: keyboard found at {} ({})", dir.display(), model.name);
-                }
-                self.engine.set_layout(&model.layout());
-                self.key_prefix = input::link_prefix(&dir);
-                self.keyboard = Some(keyboard);
-                self.keyboard_error = None;
-                self.reopen_keys(now);
-                self.dirty = true;
-                self.dimmed = false;
-                self.last_frame = None;
-                self.next_brightness = now;
-            }
+            Ok(keyboard) => self.take(keyboard, now),
             Err(e) => self.keyboard_error = Some(format!("keyboard at {} can't be opened: {e}", dir.display())),
         }
     }
 
+    /// The keyboard through the OpenRazer daemon, if it is due to be asked, runs and serves one
+    /// Keyglow knows. The bus connection is kept for the next look when it doesn't, and dropped
+    /// when it fails.
+    fn daemon_keyboard(&mut self, now: Instant) -> Option<Keyboard> {
+        let address = self.opts.bus_address.as_deref()?;
+        if now < self.next_daemon_check {
+            return None;
+        }
+        let mut bus = match self.bus.take() {
+            Some(bus) => bus,
+            None => match Bus::connect(address, openrazer::LOOKUP_TIMEOUT) {
+                Ok(bus) => bus,
+                Err(e) => {
+                    self.daemon_failed(format!("can't reach the session bus: {e}"));
+                    return None;
+                }
+            },
+        };
+        match openrazer::find(&mut bus) {
+            Ok(Some((path, model))) => {
+                self.next_daemon_check = Instant::now() + RESCAN;
+                let syncs = openrazer::syncs_effects(&mut bus).unwrap_or(false);
+                if syncs && !self.daemon_syncs {
+                    eprintln!(
+                        "keyglowd: the OpenRazer daemon's effect sync is on, so every frame can change your other Razer devices' lighting too; turn effect sync off in Polychromatic or in OpenRazer's razer.conf to keep it"
+                    );
+                }
+                self.daemon_syncs = syncs;
+                bus.set_timeout(bus::TIMEOUT);
+                let dir = device::folder_of(&self.opts.sysfs_dir, model.pid);
+                Some(Keyboard::through_daemon(bus, path, model, dir))
+            }
+            // Not running, or serving no keyboard Keyglow knows: nothing is wrong.
+            Ok(None) => {
+                self.daemon_ok();
+                self.bus = Some(bus);
+                None
+            }
+            Err(e) => {
+                self.daemon_failed(e.to_string());
+                None
+            }
+        }
+    }
+
+    /// The daemon couldn't be used: says why when that's new, and waits longer before each try.
+    fn daemon_failed(&mut self, why: String) {
+        self.next_daemon_check = Instant::now() + self.daemon_backoff;
+        self.daemon_backoff = (self.daemon_backoff * 2).min(DAEMON_BACKOFF_MAX);
+        if self.daemon_error.as_ref() != Some(&why) {
+            eprintln!("keyglowd: can't use the OpenRazer daemon ({why}), trying again later");
+            self.daemon_error = Some(why);
+            self.status_changed = true;
+        }
+    }
+
+    /// The daemon answered as it should: back to asking every 2 s, with nothing to report.
+    fn daemon_ok(&mut self) {
+        self.next_daemon_check = Instant::now() + RESCAN;
+        self.daemon_backoff = RESCAN;
+        if self.daemon_error.take().is_some() {
+            self.status_changed = true;
+        }
+    }
+
+    /// While frames go to the driver's files: moves over to the daemon if it runs now.
+    fn check_daemon(&mut self, now: Instant) {
+        if let Some(keyboard) = self.daemon_keyboard(now) {
+            self.status_changed = true;
+            self.take(keyboard, now);
+        }
+    }
+
+    /// Starts drawing on a newly found keyboard, with its key event files. Finding it isn't
+    /// logged yet when it is being tried again: the one that failed its first frame, or the
+    /// daemon after it failed. The first frame it takes logs it then.
+    fn take(&mut self, keyboard: Keyboard, now: Instant) {
+        let place = keyboard.place();
+        let retry = self.failing.as_ref() == Some(&place) || (keyboard.uses_daemon() && self.daemon_error.is_some());
+        let new = self.announced.as_ref() != Some(&place);
+        if new && !retry {
+            eprintln!("keyglowd: keyboard found {place} ({})", keyboard.model().name);
+            self.announced = Some(place.clone());
+        }
+        self.unannounced = new && retry;
+        if self.failing.as_ref().is_some_and(|f| *f != place) {
+            self.failing = None;
+        }
+        self.engine.set_layout(&keyboard.model().layout());
+        self.key_prefix = keyboard.dir().and_then(input::link_prefix);
+        self.keyboard = Some(keyboard);
+        self.keyboard_error = None;
+        self.reopen_keys(now);
+        self.dirty = true;
+        self.dimmed = false;
+        self.last_frame = None;
+        self.next_brightness = now;
+    }
+
     fn lose(&mut self, err: io::Error, now: Instant) {
         let Some(keyboard) = self.keyboard.take() else { return };
-        let dir = keyboard.dir().to_path_buf();
-        // A keyboard that never took a frame is retried quietly until it does.
+        let place = keyboard.place();
         let first_write = self.last_frame.is_none();
-        if !(first_write && self.failing.as_ref() == Some(&dir)) {
+        if keyboard.uses_daemon() && first_write {
+            // The daemon lists the keyboard but takes no frames for it. The files stand in at
+            // once, and the daemon is asked again later.
+            self.daemon_failed(format!("it took no frame: {err}"));
+            self.keys.clear();
+            self.dimmed = false;
+            self.next_rescan = now;
+            self.status_changed = true;
+            return;
+        }
+        self.announced = None;
+        // A keyboard that never took a frame is retried quietly until it does.
+        if !(first_write && self.failing.as_ref() == Some(&place)) {
             eprintln!("keyglowd: keyboard lost ({err}), looking for it every {} s", RESCAN.as_secs());
         }
-        self.keyboard_error = first_write.then(|| format!("keyboard at {} takes no frames: {err}", dir.display()));
-        self.failing = first_write.then_some(dir);
+        self.keyboard_error = first_write.then(|| format!("keyboard {place} takes no frames: {err}"));
+        self.failing = first_write.then_some(place);
         self.keys.clear();
         self.dimmed = false;
         self.next_rescan = now + RESCAN;
@@ -439,10 +599,16 @@ impl<'a> Daemon<'a> {
         if let Some(e) = &self.settings_error {
             detail.push(format!("settings not loaded: {e}"));
         }
+        if let Some(e) = &self.daemon_error {
+            detail.push(format!("OpenRazer daemon not used: {e}"));
+        }
         match (&self.keyboard, &self.keyboard_error) {
             (Some(k), _) => {
                 let untested = if k.model().tested() { "" } else { ", not yet tested with Keyglow" };
-                detail.push(format!("{} at {}{untested}", k.model().name, k.dir().display()));
+                detail.push(format!("{} {}{untested}", k.model().name, k.place()));
+                if k.uses_daemon() && self.daemon_syncs {
+                    detail.push("the daemon's effect sync is on, so other Razer devices change with every frame".to_string());
+                }
             }
             (None, Some(e)) => detail.push(e.clone()),
             (None, None) => detail.push("keyboard not found".to_string()),

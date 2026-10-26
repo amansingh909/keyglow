@@ -147,7 +147,7 @@ Ripple and Reactive need to know where each key sits. Keyglow uses Razer's stand
 
 ## What you need
 
-- The OpenRazer kernel driver (`razerkbd`) installed. The OpenRazer daemon can stay running. When it dims the keyboard for the screen saver, `keyglowd` pauses until the brightness comes back.
+- OpenRazer: its kernel driver (`razerkbd`) and, ideally, its daemon (`openrazer-daemon`), which most OpenRazer installs start at login. While the daemon runs, `keyglowd` sends every frame through the daemon's D-Bus interface, the way OpenRazer means other programs to light its devices. Without the daemon, `keyglowd` writes to the driver's files under `/sys` itself. That works today, but OpenRazer doesn't promise to keep those files the same, so a later OpenRazer update could break it. When the daemon dims the keyboard for the screen saver, `keyglowd` pauses until the brightness comes back. It reads that brightness from the driver's folder, because the daemon doesn't report it while the screen saver runs. If that file ever changes, the lighting just keeps running while the screen is locked.
 - Your user in the `plugdev` group. No root is needed to run or install Keyglow.
 - Read access to the keyboard's input device, so `keyglowd` can see key presses for Ripple and Reactive. The logged-in user normally has it through the desktop's access list for the device, or through the `input` or `plugdev` group. Without it the lighting still runs, but nothing reacts to keys.
 - Linux 6.12 or newer, so the lighting keeps up while the computer is busy. Older kernels work too, but under load the frames and key presses can lag.
@@ -213,13 +213,15 @@ The install puts a systemd user service at `~/.config/systemd/user/keyglowd.serv
     systemctl --user restart keyglowd
     journalctl --user -u keyglowd
 
-`keyglowd` copes with the keyboard being unplugged and plugged back in, and with sleep and wake. While the keyboard is missing it looks for it again every couple of seconds.
+`keyglowd` copes with the keyboard being unplugged and plugged back in, and with sleep and wake. While the keyboard is missing it looks for it again every couple of seconds. It also follows the OpenRazer daemon: if the daemon starts after it, or restarts, the frames move over to it within a couple of seconds, and if the daemon stops, they go back to the driver's files.
 
 ## Cost
 
-While something is animating at 30 frames a second, `keyglowd` uses about 1 to 3% of one core, almost all of it the keyboard driver's USB transfers, and under 3 MB of memory. When nothing is moving it draws nothing and sleeps, except that it resends the last frame every 5 seconds, so another program can't take the keyboard over for long. The window uses nothing when closed and almost nothing when idle.
+While something is animating at 30 frames a second through the OpenRazer daemon, the lighting takes about 4% of one core. That counts `keyglowd` itself (about 0.4%), the daemon, which does most of the work for each frame, and the session bus. Without the daemon, `keyglowd` does the keyboard's USB transfers itself and the whole cost is about 1 to 3%. A lower frame rate costs less either way. Each frame also reaches the keyboard about 4 ms later through the daemon, about 14 ms instead of 10.
 
-It also asks the kernel for a short time slice, so it gets a CPU soon after it wakes even while a game or a build keeps every core busy. That changes when it runs, not how much CPU it takes.
+`keyglowd` uses under 3 MB of memory. When nothing is moving it draws nothing and sleeps, except that it resends the last frame every 5 seconds, so another program can't take the keyboard over for long. The window uses nothing when closed and almost nothing when idle.
+
+It also asks the kernel for a short time slice, so it gets a CPU soon after it wakes even while a game or a build keeps every core busy. That changes when it runs, not how much CPU it takes. In a test with every core busy, the slowest frame took under 30 ms on either path.
 
 ## Files
 
@@ -228,11 +230,13 @@ It also asks the kernel for a short time slice, so it gets a CPU soon after it w
 - `$XDG_RUNTIME_DIR/keyglow/status.json`: a small status file `keyglowd` writes so the window can show its state.
 - `~/.local/bin/keyglowd`, `~/.local/bin/keyglow`, `~/.config/systemd/user/keyglowd.service`, `~/.local/share/applications/keyglow.desktop`, `~/.local/share/icons/hicolor/scalable/apps/keyglow.svg`: what the installer puts down.
 
-For testing, `keyglowd` accepts `--config-dir`, `--sysfs-dir`, `--input-dir` and `--status-file`. The defaults are the real paths.
+For testing, `keyglowd` accepts `--config-dir`, `--sysfs-dir`, `--input-dir`, `--status-file` and `--bus-address`. The defaults are the real paths and the session bus. `--bus-address none` leaves the OpenRazer daemon out and uses the driver's files.
 
 ## Troubleshooting
 
-- The window says the keyboard is not found: check that your model is in the [list](#supported-keyboards), that the OpenRazer driver is loaded and that your user is in `plugdev` (`id`). Log out and in again after joining the group.
+- The window says the keyboard is not found: check that your model is in the [list](#supported-keyboards), that the OpenRazer driver is loaded, that the daemon runs (`systemctl --user status openrazer-daemon`) and that your user is in `plugdev` (`id`). Log out and in again after joining the group.
+- To see which way the frames go, look at the window's status line. It says `through the OpenRazer daemon`, or names the driver's folder under `/sys` when the daemon isn't running. If the daemon runs but can't be used, the line says why after `OpenRazer daemon not used:`, and `keyglowd` tries it again later.
+- Your other Razer devices, such as a mouse, change their lighting while Keyglow runs: OpenRazer's effect sync is on, and it hands the keyboard's custom mode on to them with every frame. Turn effect sync off in Polychromatic, or set `sync_effects_enabled = False` in `~/.config/openrazer/razer.conf` and restart the daemon. The status line says when sync is on.
 - The lighting flickers: something else is lighting the keyboard. Stop OpenRGB or other lighting tools for it.
 - The keyboard goes dark when the screen locks: that is OpenRazer dimming it for the screen saver. It comes back on unlock.
 - A ripple starts from the wrong key: key positions come from Razer's standard key grid. On a full-size or tenkeyless keyboard that's a bug, and the fix is one line in `crates/keyglow-core/src/keymap.rs`. Compact keyboards and laptops can differ from the grid, so please open an issue with your model.
