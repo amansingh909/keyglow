@@ -158,10 +158,10 @@ Ripple and Reactive need to know where each key sits. Keyglow uses Razer's stand
 
 ### From a release
 
-Download `keyglow-v0.2.1-x86_64-linux.tar.gz` from the [releases page](../../releases), then:
+Download `keyglow-v0.3.0-x86_64-linux.tar.gz` from the [releases page](../../releases), then:
 
-    tar xf keyglow-v0.2.1-x86_64-linux.tar.gz
-    cd keyglow-v0.2.1-x86_64-linux
+    tar xf keyglow-v0.3.0-x86_64-linux.tar.gz
+    cd keyglow-v0.3.0-x86_64-linux
     ./install.sh --enable
 
 The programs in the download are already built, so you don't need Rust. They were built on Pop!_OS 24.04 and need glibc 2.39 or newer (Ubuntu 24.04 and later have it). On an older system, build from source instead.
